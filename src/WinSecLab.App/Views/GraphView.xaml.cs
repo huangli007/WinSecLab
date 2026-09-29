@@ -23,12 +23,14 @@ public partial class GraphView : UserControl, IRefreshable
 {
     private readonly AppState _state;
     private readonly Dictionary<string, Ellipse> _nodeShapes = new();
+    private readonly Dictionary<string, SecurityGraphNode> _nodesById = new();
 
     private double _scale = 1.0;
     private Point _pan;
     private bool _dragging;
     private Point _dragStart;
     private Point _panStart;
+    private SecurityGraphNode? _selectedNode;
 
     public GraphView(AppState state)
     {
@@ -60,10 +62,15 @@ public partial class GraphView : UserControl, IRefreshable
     {
         GraphCanvas.Children.Clear();
         _nodeShapes.Clear();
+        _nodesById.Clear();
+        _selectedNode = null;
+        SelDetailPanel.Visibility = Visibility.Collapsed;
 
         var result = _state.Result;
         var nodes = result?.GraphNodes ?? new List<SecurityGraphNode>();
         var edges = result?.GraphEdges ?? new List<SecurityGraphEdge>();
+
+        foreach (var n in nodes) _nodesById[n.Id] = n;
 
         NodeCountText.Text = $"{nodes.Count} 个节点 · {edges.Count} 条关系";
         SummaryText.Text = nodes.Count == 0
@@ -136,6 +143,7 @@ public partial class GraphView : UserControl, IRefreshable
                 Stroke = node.IsTarget ? Frozen("#4F46E5") : Frozen("#FFFFFF"),
                 StrokeThickness = node.IsTarget ? 2.5 : 1.2,
                 ToolTip = BuildTooltip(node),
+                Tag = node.Id,   // 点击命中时用 Tag 反查节点，避免 O(n) 遍历
             };
 
             Canvas.SetLeft(ellipse, cx + node.X * fit - radius);
@@ -263,14 +271,94 @@ public partial class GraphView : UserControl, IRefreshable
 
     private void NodeGrid_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (NodeGrid.SelectedItem is not SecurityGraphNode node) return;
-        if (!_nodeShapes.TryGetValue(node.Id, out var shape)) return;
+        if (NodeGrid.SelectedItem is SecurityGraphNode node)
+            SelectNode(node);
+    }
+
+    /// <summary>选中一个节点：画布高亮 + 右侧详情联动。</summary>
+    private void SelectNode(SecurityGraphNode node)
+    {
+        _selectedNode = node;
+
+        // 同步列表选中（若列表里可见该节点）；WPF 对相同项不会重复触发 SelectionChanged，无递归风险
+        if (!ReferenceEquals(NodeGrid.SelectedItem, node))
+            NodeGrid.SelectedItem = node;
 
         // 选中节点高亮：其余节点降透明度，避免在大图里找不到目标
-        foreach (var s in _nodeShapes.Values) s.Opacity = 0.35;
-        shape.Opacity = 1;
-        shape.StrokeThickness = 3;
-        shape.Stroke = Frozen("#4F46E5");
+        if (_nodeShapes.TryGetValue(node.Id, out var shape))
+        {
+            foreach (var s in _nodeShapes.Values) s.Opacity = 0.35;
+            shape.Opacity = 1;
+            shape.StrokeThickness = 3;
+            shape.Stroke = Frozen("#4F46E5");
+        }
+
+        SelDetailPanel.Visibility = Visibility.Visible;
+        RefreshNodeDetail(node);
+    }
+
+    /// <summary>刷新右侧详情：节点自身信息 + 关联证据/发现/关系（回溯到原始证据）。</summary>
+    private void RefreshNodeDetail(SecurityGraphNode node)
+    {
+        SelKind.Text = node.KindLabel;
+        SelLabel.Text = node.Label;
+        SelPath.Text = node.FullPath ?? "";
+        SelPath.Visibility = string.IsNullOrEmpty(node.FullPath) ? Visibility.Collapsed : Visibility.Visible;
+        SelDetail.Text = node.Detail ?? "";
+        SelDetail.Visibility = string.IsNullOrEmpty(node.Detail) ? Visibility.Collapsed : Visibility.Visible;
+
+        SelSuspectBadge.Visibility = node.IsSuspicious ? Visibility.Visible : Visibility.Collapsed;
+        SelSeverity.Text = node.Severity switch
+        {
+            Severity.Critical => "严重",
+            Severity.High => "高",
+            Severity.Medium => "中",
+            Severity.Low => "低",
+            _ => "可疑",
+        };
+
+        var result = _state.Result;
+
+        // 关联证据
+        var evidence = result?.Evidence ?? new List<Evidence>();
+        var evList = node.EvidenceIds
+            .Select(id => evidence.FirstOrDefault(x => x.Id == id))
+            .Where(x => x is not null)
+            .Cast<Evidence>()
+            .Select(x => $"· {x.Title}（{x.Source}）")
+            .ToList();
+        SelEvidenceHeader.Text = $"关联证据（{evList.Count}）";
+        SelEvidenceList.ItemsSource = evList;
+        SelEvidenceHeader.Visibility = evList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        // 关联发现
+        var findings = result?.Findings ?? new List<Finding>();
+        var findList = node.FindingIds
+            .Select(id => findings.FirstOrDefault(f => f.Id == id))
+            .Where(f => f is not null)
+            .Cast<Finding>()
+            .Select(f => $"· [{f.SeverityText}] {f.Title}")
+            .ToList();
+        SelFindingHeader.Text = $"关联发现（{findList.Count}）";
+        SelFindingList.ItemsSource = findList;
+        SelFindingHeader.Visibility = findList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        // 关联关系（与其它节点的边）
+        var edges = result?.GraphEdges ?? new List<SecurityGraphEdge>();
+        var edgeList = edges
+            .Where(e => e.SourceId == node.Id || e.TargetId == node.Id)
+            .Select(e =>
+            {
+                var otherId = e.SourceId == node.Id ? e.TargetId : e.SourceId;
+                var otherLabel = _nodesById.TryGetValue(otherId, out var other) ? other.Label : otherId;
+                var dir = e.SourceId == node.Id ? "→" : "←";
+                return $"· {node.Label} {dir} {otherLabel}{(string.IsNullOrEmpty(e.Relation) ? "" : $"（{e.Relation}）")}";
+            })
+            .Take(30)
+            .ToList();
+        SelEdgeHeader.Text = $"关联关系（{edgeList.Count}）";
+        SelEdgeList.ItemsSource = edgeList;
+        SelEdgeHeader.Visibility = edgeList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ─────────────────────────────── 交互 ───────────────────────────────
@@ -332,8 +420,24 @@ public partial class GraphView : UserControl, IRefreshable
 
     private void GraphCanvas_OnMouseUp(object sender, MouseButtonEventArgs e)
     {
+        var wasDragging = _dragging;
         _dragging = false;
         GraphCanvas.ReleaseMouseCapture();
         GraphCanvas.Cursor = Cursors.Arrow;
+
+        // 只有"没拖拽"（原地点击）才做节点命中选中；拖拽平移后松开不算点击
+        if (wasDragging)
+        {
+            var now = e.GetPosition(GraphCanvas);
+            var moved = Math.Abs(now.X - _dragStart.X) + Math.Abs(now.Y - _dragStart.Y);
+            if (moved > 4) return;   // 实际拖拽了，不是点击
+        }
+
+        // 命中测试：找到被点中的节点（Ellipse.Tag 存了节点 Id）
+        if (GraphCanvas.InputHitTest(e.GetPosition(GraphCanvas)) is Ellipse { Tag: string nodeId }
+            && _nodesById.TryGetValue(nodeId, out var node))
+        {
+            SelectNode(node);
+        }
     }
 }

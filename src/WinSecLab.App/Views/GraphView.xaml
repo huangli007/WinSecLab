@@ -77,13 +77,15 @@
             </Grid>
         </Border>
 
-        <!-- 右：节点列表 -->
+        <!-- 右：节点清单 + 选中详情 -->
         <Border Grid.Column="2" Style="{StaticResource Card}" Padding="0" Margin="0">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
                 <StackPanel Grid.Row="0" Margin="16,16,16,8">
@@ -97,7 +99,7 @@
                 </StackPanel>
 
                 <DataGrid x:Name="NodeGrid" Grid.Row="2" Style="{StaticResource Grid}" BorderThickness="0"
-                          SelectionChanged="NodeGrid_OnSelectionChanged">
+                          SelectionChanged="NodeGrid_OnSelectionChanged" MinHeight="160">
                     <DataGrid.Columns>
                         <DataGridTemplateColumn Header="类别" Width="66">
                             <DataGridTemplateColumn.CellTemplate>
@@ -111,6 +113,64 @@
                         <DataGridTextColumn Header="权重" Binding="{Binding Weight}" Width="56" />
                     </DataGrid.Columns>
                 </DataGrid>
+
+                <!-- 选中节点详情 -->
+                <!-- 选中节点详情（无选中时整块隐藏，由代码控制） -->
+                <Border x:Name="SelDetailPanel" Grid.Row="3" Background="{StaticResource B.SurfaceAlt}"
+                        BorderBrush="{StaticResource B.Border}" BorderThickness="0,1,0,0" Padding="16,12"
+                        Visibility="Collapsed">
+                    <StackPanel>
+                        <TextBlock Text="选中节点" Style="{StaticResource T.Label}" />
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                            <Border Style="{StaticResource Badge}" Background="{StaticResource B.AccentSoft}">
+                                <TextBlock x:Name="SelKind" FontSize="10.5" Foreground="{StaticResource B.Accent}" />
+                            </Border>
+                            <Border x:Name="SelSuspectBadge" Style="{StaticResource Badge}" Background="#FCEBEB"
+                                    Margin="6,0,0,0" Visibility="Collapsed">
+                                <TextBlock x:Name="SelSeverity" FontSize="10.5" Foreground="#9C0006" />
+                            </Border>
+                        </StackPanel>
+                        <TextBlock x:Name="SelLabel" Style="{StaticResource T.H3}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                        <TextBlock x:Name="SelPath" Style="{StaticResource T.Mono}" Foreground="{StaticResource B.TextDim}"
+                                   Margin="0,4,0,0" TextWrapping="Wrap" />
+                        <TextBlock x:Name="SelDetail" Style="{StaticResource T.Caption}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 关联信息 -->
+                <ScrollViewer Grid.Row="4" MaxHeight="220" VerticalScrollBarVisibility="Auto" Padding="16,4,16,14">
+                    <StackPanel x:Name="SelRelationsPanel">
+                        <TextBlock x:Name="SelEvidenceHeader" Style="{StaticResource T.Label}" Margin="0,10,0,4" />
+                        <ItemsControl x:Name="SelEvidenceList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" Style="{StaticResource T.Caption}" TextWrapping="Wrap"
+                                               Margin="0,1" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <TextBlock x:Name="SelFindingHeader" Style="{StaticResource T.Label}" Margin="0,10,0,4" />
+                        <ItemsControl x:Name="SelFindingList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" Style="{StaticResource T.Caption}" TextWrapping="Wrap"
+                                               Margin="0,1" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <TextBlock x:Name="SelEdgeHeader" Style="{StaticResource T.Label}" Margin="0,10,0,4" />
+                        <ItemsControl x:Name="SelEdgeList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" Style="{StaticResource T.Caption}" TextWrapping="Wrap"
+                                               Margin="0,1" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
             </Grid>
         </Border>
     </Grid>
