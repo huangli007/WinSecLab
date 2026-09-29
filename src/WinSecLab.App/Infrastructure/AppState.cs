@@ -529,6 +529,49 @@ public sealed class AppState : ObservableObject
         }
     }
 
+    /// <summary>
+    /// 把发现清单导出为 CSV。给"拿去 Excel 做跟踪表"的场景 —— 报告是成品，CSV 是原料。
+    /// 返回导出的文件路径（失败返回 null）。
+    /// </summary>
+    public string? ExportFindingsCsv()
+    {
+        if (Result is null || Layout is null || CurrentProject is null) return null;
+
+        try
+        {
+            var path = Path.Combine(Layout.Reports, $"{CurrentProject.Id}-发现清单.csv");
+            Core.Engines.Reports.CsvExporter.ExportFindings(Result, path);
+            ReportFiles.Insert(0, path);
+            AppendLog($"已导出发现清单：{Path.GetFileName(path)}（{Result.Findings.Count} 条）");
+            return path;
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[导出] 发现清单导出失败：{ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>把证据清单导出为 CSV（供人工核对每条结论的原始依据）。</summary>
+    public string? ExportEvidenceCsv()
+    {
+        if (Result is null || Layout is null || CurrentProject is null) return null;
+
+        try
+        {
+            var path = Path.Combine(Layout.Reports, $"{CurrentProject.Id}-证据清单.csv");
+            Core.Engines.Reports.CsvExporter.ExportEvidence(Result, path);
+            ReportFiles.Insert(0, path);
+            AppendLog($"已导出证据清单：{Path.GetFileName(path)}（{Result.Evidence.Count} 条）");
+            return path;
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[导出] 证据清单导出失败：{ex.Message}");
+            return null;
+        }
+    }
+
     public static void OpenInShell(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return;

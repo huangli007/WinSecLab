@@ -27,6 +27,21 @@ public partial class FindingsView : UserControl, IRefreshable
         ApplyFilter();
     }
 
+    /// <summary>把当前发现清单导出为 CSV（Excel 直接打开，可做跟踪表）。</summary>
+    private void ExportCsv_OnClick(object sender, RoutedEventArgs e)
+    {
+        var path = _state.ExportFindingsCsv();
+        if (path is null)
+        {
+            MessageBox.Show("没有可导出的结果，请先执行一次分析。", "WinSecLab",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        // 导出成功后直接打开，省一步「去报告目录找文件」
+        AppState.OpenInShell(path);
+    }
+
     private void Filter_OnChanged(object sender, RoutedEventArgs e)
     {
         if (!IsInitialized) return;

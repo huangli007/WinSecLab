@@ -30,15 +30,21 @@
                     <TextBlock x:Name="SummaryText" Style="{StaticResource T.Caption}" Margin="0,3,0,0" />
                 </StackPanel>
 
-                <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="18,0,18,10">
-                    <RadioButton x:Name="AllRadio" Content="全部" IsChecked="True" GroupName="Sev"
-                                 Checked="Filter_OnChanged" />
-                    <RadioButton x:Name="CriticalRadio" Content="严重" GroupName="Sev" Checked="Filter_OnChanged" />
-                    <RadioButton x:Name="HighRadio" Content="高" GroupName="Sev" Checked="Filter_OnChanged" />
-                    <RadioButton x:Name="MediumRadio" Content="中" GroupName="Sev" Checked="Filter_OnChanged" />
-                    <RadioButton x:Name="LowRadio" Content="低" GroupName="Sev" Checked="Filter_OnChanged" />
-                    <RadioButton x:Name="InfoRadio" Content="提示" GroupName="Sev" Checked="Filter_OnChanged" />
-                </StackPanel>
+                <Grid Grid.Row="1" Margin="18,0,18,10">
+                    <StackPanel Orientation="Horizontal">
+                        <RadioButton x:Name="AllRadio" Content="全部" IsChecked="True" GroupName="Sev"
+                                     Checked="Filter_OnChanged" />
+                        <RadioButton x:Name="CriticalRadio" Content="严重" GroupName="Sev" Checked="Filter_OnChanged" />
+                        <RadioButton x:Name="HighRadio" Content="高" GroupName="Sev" Checked="Filter_OnChanged" />
+                        <RadioButton x:Name="MediumRadio" Content="中" GroupName="Sev" Checked="Filter_OnChanged" />
+                        <RadioButton x:Name="LowRadio" Content="低" GroupName="Sev" Checked="Filter_OnChanged" />
+                        <RadioButton x:Name="InfoRadio" Content="提示" GroupName="Sev" Checked="Filter_OnChanged" />
+                    </StackPanel>
+                    <Button Content="导出清单 CSV" Style="{StaticResource Btn.Secondary}"
+                            HorizontalAlignment="Right" VerticalAlignment="Center"
+                            Click="ExportCsv_OnClick"
+                            ToolTip="导出为 CSV，可直接用 Excel 打开做跟踪表" />
+                </Grid>
 
                 <DataGrid x:Name="FindingGrid" Grid.Row="2" Style="{StaticResource Grid}" BorderThickness="0"
                           SelectionChanged="FindingGrid_OnSelectionChanged">

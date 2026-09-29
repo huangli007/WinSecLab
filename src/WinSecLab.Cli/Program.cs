@@ -322,6 +322,26 @@ public static class Program
 
         foreach (var f in report.Files) Console.WriteLine($"  已生成：{f}");
         foreach (var w in report.Warnings) Console.WriteLine($"  警告：{w}");
+
+        // --csv：额外导出发现/证据清单（Excel 可直接打开的跟踪表）
+        if (options.Has("--csv"))
+        {
+            try
+            {
+                var findingsCsv = System.IO.Path.Combine(layout.Reports, $"{project.Id}-发现清单.csv");
+                WinSecLab.Core.Engines.Reports.CsvExporter.ExportFindings(result, findingsCsv);
+                Console.WriteLine($"  已生成：{findingsCsv}");
+
+                var evidenceCsv = System.IO.Path.Combine(layout.Reports, $"{project.Id}-证据清单.csv");
+                WinSecLab.Core.Engines.Reports.CsvExporter.ExportEvidence(result, evidenceCsv);
+                Console.WriteLine($"  已生成：{evidenceCsv}");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"  CSV 导出失败：{ex.Message}");
+            }
+        }
+
         return report.Files.Count > 0 ? 0 : 1;
     }
 
@@ -604,6 +624,7 @@ wsx —— WinSecLab Windows 应用程序安全测试平台（命令行）
   wsx analyze <目标文件> [选项]      创建/复用项目并执行完整分析
   wsx monitor <目标文件> [选项]      仅执行动态监控（等价于 analyze --dynamic-only）
   wsx report  <项目编号>             基于已落库结果重新生成报告
+  wsx report  <项目编号> --csv       额外导出发现/证据清单 CSV（Excel 可打开）
   wsx projects                       列出工作区内的项目
   wsx projects --delete <编号>        删除项目（默认移入回收站，可恢复）
   wsx projects --delete <编号> --permanent
