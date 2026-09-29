@@ -1,0 +1,43 @@
+# ─── 编译产物 ───
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+*.cache
+project.lock.json
+project.fragment.lock.json
+
+# ─── 发布产物（源码即可复现构建） ───
+dist/
+publish/
+*.nupkg
+
+# ─── 运行时工作区数据（含复制的样本副本与 SQLite 数据库，禁止提交） ───
+.wsx-smoke/
+.wsx/
+
+# ─── 界面回归截图 ───
+.ui-shots/
+
+# ─── 工作区本地数据（记忆/临时文件，非源码） ───
+.workbuddy/
+.vs/
+.idea/
+.vscode/
+
+# ─── 系统与日志 ───
+*.log
+*.pdb
+*.pid
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# ─── 测试与临时 ───
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+*.tmp

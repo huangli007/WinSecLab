@@ -1,0 +1,28 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>WinSecLab.Core</RootNamespace>
+    <AssemblyName>WinSecLab.Core</AssemblyName>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <Version>0.1.0</Version>
+    <Product>WinSecLab</Product>
+    <Description>WinSecLab core engine: static / dynamic / network analysis, evidence store, findings engine, reporting.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 让测试程序集能直接测 internal 的解析器（CSV/输出解析正是最容易回归的地方） -->
+    <InternalsVisibleTo Include="WinSecLab.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageReference Include="System.Management" Version="10.0.12" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.12" />
+  </ItemGroup>
+
+</Project>

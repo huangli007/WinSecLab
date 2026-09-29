@@ -1,0 +1,97 @@
+﻿<UserControl x:Class="WinSecLab.App.Views.ReportsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:infra="clr-namespace:WinSecLab.App.Infrastructure"
+             Background="{StaticResource B.Bg}">
+    <UserControl.Resources>
+        <infra:BoolToVisibilityConverter x:Key="BoolVis" />
+    </UserControl.Resources>
+
+    <Grid Margin="22">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="1.2*" MinWidth="440" />
+            <ColumnDefinition Width="16" />
+            <ColumnDefinition Width="1*" MinWidth="360" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 左：报告列表 -->
+        <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0" Margin="0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" Margin="18,16,18,10">
+                    <TextBlock Text="测试报告" Style="{StaticResource T.H1}" />
+                    <TextBlock x:Name="SummaryText" Style="{StaticResource T.Caption}" Margin="0,3,0,0"
+                               Text="每次分析会自动生成 HTML / Markdown / JSON 三种格式。HTML 可直接在浏览器里打印成 PDF。" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="18,0,18,10">
+                    <Button Content="基于当前结果重新生成" Style="{StaticResource Btn.Primary}"
+                            Click="Regenerate_OnClick" Margin="0,0,8,0" />
+                    <Button Content="打开报告目录" Style="{StaticResource Btn.Secondary}"
+                            Click="OpenFolder_OnClick" />
+                </StackPanel>
+
+                <DataGrid x:Name="ReportGrid" Grid.Row="2" Style="{StaticResource Grid}" BorderThickness="0"
+                          SelectionChanged="ReportGrid_OnSelectionChanged">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="文件名" Binding="{Binding Name}" Width="*" />
+                        <DataGridTextColumn Header="格式" Binding="{Binding Format}" Width="80" />
+                        <DataGridTextColumn Header="时间" Binding="{Binding Modified, StringFormat=yyyy-MM-dd HH:mm}" Width="140" />
+                        <DataGridTextColumn Header="大小" Binding="{Binding SizeText}" Width="86" />
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
+        </Border>
+
+        <!-- 右：预览 / 操作 -->
+        <Border Grid.Column="2" Style="{StaticResource Card}">
+            <StackPanel>
+                <TextBlock Text="报告说明" Style="{StaticResource T.H2}" />
+                <Border Style="{StaticResource Divider}" />
+
+                <StackPanel Margin="0,2,0,0">
+                    <TextBlock Text="HTML" Style="{StaticResource T.Label}" />
+                    <TextBlock Style="{StaticResource T.Body}" Margin="0,0,0,10"
+                               Text="自包含单文件（样式内联），双击即可用浏览器打开；用浏览器「打印 → 另存为 PDF」即可得到 PDF 报告。" />
+
+                    <TextBlock Text="Markdown" Style="{StaticResource T.Label}" />
+                    <TextBlock Style="{StaticResource T.Body}" Margin="0,0,0,10"
+                               Text="适合贴进 Wiki、禅道或代码仓库，表格结构完整保留。" />
+
+                    <TextBlock Text="JSON" Style="{StaticResource T.Label}" />
+                    <TextBlock Style="{StaticResource T.Body}" Margin="0,0,0,10"
+                               Text="结构化结果，便于接入 CI 或做二次统计（findings / evidence / events 均已导出）。" />
+                </StackPanel>
+
+                <Border Style="{StaticResource Divider}" />
+
+                <TextBlock Text="报告章节" Style="{StaticResource T.Label}" />
+                <TextBlock Style="{StaticResource T.Body}" Margin="0,0,0,14" TextWrapping="Wrap"
+                           Text="执行摘要 · 应用信息 · 测试环境 · 静态分析 · 动态行为 · 网络分析 · 文件系统 · 注册表 · 依赖关系 · 安全发现 · 证据附录 · 安全图谱 · 附录与方法" />
+
+                <ItemsControl x:Name="SelectedActions">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,7">
+                                <TextBlock Text="{Binding Label}" Style="{StaticResource T.Body}"
+                                           VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <Button Content="打开" Style="{StaticResource Btn.Ghost}" Tag="{Binding Path}"
+                                        Click="OpenFile_OnClick" />
+                                <Button Content="定位" Style="{StaticResource Btn.Ghost}" Tag="{Binding Path}"
+                                        Click="RevealFile_OnClick" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock x:Name="NoSelectionText" Style="{StaticResource T.Dim}"
+                           Text="从左侧选择一份报告。" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WinSecLab.App/WinSecLab.App.csproj" />
+    <Project Path="src/WinSecLab.Cli/WinSecLab.Cli.csproj" />
+    <Project Path="src/WinSecLab.Core/WinSecLab.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/WinSecLab.Tests/WinSecLab.Tests.csproj" />
+  </Folder>
+</Solution>

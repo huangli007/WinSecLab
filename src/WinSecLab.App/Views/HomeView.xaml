@@ -1,0 +1,136 @@
+﻿<UserControl x:Class="WinSecLab.App.Views.HomeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:infra="clr-namespace:WinSecLab.App.Infrastructure"
+             Background="{StaticResource B.Bg}">
+    <UserControl.Resources>
+        <infra:BoolToVisibilityConverter x:Key="BoolVis" />
+        <infra:TruncateConverter x:Key="Truncate" />
+    </UserControl.Resources>
+
+    <Grid Margin="22">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="1.4*" />
+            <ColumnDefinition Width="16" />
+            <ColumnDefinition Width="1*" MinWidth="360" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 左：项目列表 -->
+        <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0" Margin="0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Margin="18,16,18,12">
+                    <StackPanel>
+                        <TextBlock Text="测试项目" Style="{StaticResource T.H1}" />
+                        <TextBlock x:Name="ProjectCountText" Style="{StaticResource T.Caption}" Margin="0,3,0,0" />
+                    </StackPanel>
+                    <Button Content="刷新" Style="{StaticResource Btn.Secondary}" HorizontalAlignment="Right"
+                            VerticalAlignment="Top" Click="Refresh_OnClick" />
+                </Grid>
+
+                <DataGrid x:Name="ProjectGrid" Grid.Row="1" Style="{StaticResource Grid}" BorderThickness="0"
+                          SelectionChanged="ProjectGrid_OnSelectionChanged" MouseDoubleClick="ProjectGrid_OnDoubleClick">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="项目编号" Binding="{Binding Id}" Width="150" />
+                        <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="*" />
+                        <DataGridTextColumn Header="目标文件" Binding="{Binding Target.FileName}" Width="180" />
+                        <DataGridTextColumn Header="架构" Binding="{Binding Target.Architecture}" Width="80" />
+                        <DataGridTextColumn Header="运行时" Binding="{Binding Target.Runtime}" Width="110" />
+                        <DataGridTextColumn Header="更新时间" Binding="{Binding UpdatedAt, StringFormat=yyyy-MM-dd HH:mm}" Width="140" />
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
+        </Border>
+
+        <!-- 右：导入 + 项目详情 -->
+        <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="导入目标" Style="{StaticResource T.H2}" />
+                        <TextBlock Style="{StaticResource T.Caption}" Margin="0,3,0,14"
+                                   Text="选择一个可执行文件（EXE / DLL / MSI）建立测试项目。样本会复制进项目目录用于取证与哈希比对，分析时仍从原始位置启动程序以保证行为不失真。" />
+
+                        <!-- 拖拽区 -->
+                        <Border x:Name="DropZone" Height="96" CornerRadius="8" AllowDrop="True"
+                                Background="{StaticResource B.SurfaceAlt}"
+                                BorderBrush="{StaticResource B.BorderStrong}" BorderThickness="1"
+                                Drop="DropZone_OnDrop" DragOver="DropZone_OnDragOver"
+                                MouseLeftButtonUp="DropZone_OnClick" Cursor="Hand">
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                <TextBlock Text="把 EXE / DLL 拖到这里" HorizontalAlignment="Center"
+                                           Style="{StaticResource T.Body}" Foreground="{StaticResource B.TextDim}" />
+                                <TextBlock Text="或点击选择文件" HorizontalAlignment="Center"
+                                           Style="{StaticResource T.Caption}" Margin="0,4,0,0" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="目标路径" Style="{StaticResource T.Label}" Margin="0,14,0,3" />
+                        <TextBox x:Name="TargetPathBox" Style="{StaticResource Tb}" />
+
+                        <TextBlock Text="项目名称（留空则取文件名）" Style="{StaticResource T.Label}" Margin="0,12,0,3" />
+                        <TextBox x:Name="ProjectNameBox" Style="{StaticResource Tb}" />
+
+                        <TextBlock Text="测试 Profile" Style="{StaticResource T.Label}" Margin="0,12,0,3" />
+                        <ComboBox x:Name="ProfileBox" SelectionChanged="ProfileBox_OnSelectionChanged">
+                            <ComboBoxItem Content="Basic —— 仅静态检查" Tag="Basic" />
+                            <ComboBoxItem Content="Desktop Application —— 静态 + 动态行为" Tag="DesktopApplication" />
+                            <ComboBoxItem Content=".NET Application —— 静态 + 托管代码结构" Tag="DotNetApplication" />
+                            <ComboBoxItem Content="Full Security Assessment —— 全部任务" Tag="FullSecurityAssessment" />
+                        </ComboBox>
+
+                        <TextBlock x:Name="ProfileHintText" Style="{StaticResource T.Caption}" Margin="0,7,0,0" />
+
+                        <Button Content="创建项目" Style="{StaticResource Btn.Primary}" Margin="0,16,0,0"
+                                HorizontalAlignment="Stretch" Padding="0,9" Click="Create_OnClick" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 当前项目详情 -->
+                <Border Style="{StaticResource Card}" Visibility="{Binding HasProject, Converter={StaticResource BoolVis}}">
+                    <StackPanel>
+                        <TextBlock Text="当前项目" Style="{StaticResource T.H2}" />
+
+                        <StackPanel Margin="0,12,0,0">
+                            <TextBlock Text="项目编号" Style="{StaticResource T.Label}" />
+                            <TextBlock Text="{Binding CurrentProject.Id}" Style="{StaticResource T.Mono}" />
+
+                            <TextBlock Text="名称" Style="{StaticResource T.Label}" Margin="0,10,0,3" />
+                            <TextBlock Text="{Binding CurrentProject.Name}" Style="{StaticResource T.Body}" />
+
+                            <TextBlock Text="样本副本" Style="{StaticResource T.Label}" Margin="0,10,0,3" />
+                            <TextBlock Text="{Binding CurrentProject.PrimaryTargetPath}" Style="{StaticResource T.Caption}"
+                                       ToolTip="{Binding CurrentProject.PrimaryTargetPath}" />
+
+                            <TextBlock Text="原始路径（执行位置）" Style="{StaticResource T.Label}" Margin="0,10,0,3" />
+                            <TextBlock Text="{Binding CurrentProject.ExecutionTargetPath}" Style="{StaticResource T.Caption}"
+                                       ToolTip="{Binding CurrentProject.ExecutionTargetPath}" />
+
+                            <TextBlock Text="SHA-256" Style="{StaticResource T.Label}" Margin="0,10,0,3" />
+                            <TextBlock Text="{Binding CurrentProject.Target.Sha256}" Style="{StaticResource T.Mono}" />
+
+                            <TextBlock Text="版本 / 厂商" Style="{StaticResource T.Label}" Margin="0,10,0,3" />
+                            <TextBlock Style="{StaticResource T.Body}">
+                                <Run Text="{Binding CurrentProject.Target.FileVersion, Mode=OneWay}" />
+                                <Run Text=" · " /><Run Text="{Binding CurrentProject.Target.CompanyName, Mode=OneWay}" />
+                            </TextBlock>
+                        </StackPanel>
+
+                        <Border Style="{StaticResource Divider}" />
+
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="打开目录" Style="{StaticResource Btn.Secondary}" Margin="0,0,8,0"
+                                    Click="RevealProject_OnClick" />
+                            <Button Content="前往测试执行" Style="{StaticResource Btn.Primary}"
+                                    Click="GoRun_OnClick" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>
