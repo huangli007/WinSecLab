@@ -183,6 +183,42 @@ public sealed class WorkspaceService
     }
 
     /// <summary>
+    /// 更新项目元数据（名称 / 描述 / 作者 / 授权信息）。
+    ///
+    /// 只改数据库字段，**不动项目目录名** —— 目录名是创建时的快照，
+    /// 重命名目录会让已生成的报告里记录的路径、外部脚本引用全部断开，
+    /// 代价大于收益。传入 null 表示该字段保持不变。
+    /// </summary>
+    public UpdateProjectOutcome UpdateProject(string projectIdOrFolder,
+        string? name = null, string? description = null,
+        string? author = null, string? authorization = null)
+    {
+        var opened = OpenProject(projectIdOrFolder);
+        if (opened is null) return new UpdateProjectOutcome(false, null, "找不到该项目。");
+
+        var (project, _, db) = opened.Value;
+
+        if (name is not null)
+        {
+            var trimmed = name.Trim();
+            if (trimmed.Length == 0)
+                return new UpdateProjectOutcome(false, project.Name, "项目名称不能为空。");
+            if (trimmed.Length > 80)
+                return new UpdateProjectOutcome(false, project.Name, "项目名称过长（上限 80 字）。");
+            project.Name = trimmed;
+        }
+
+        if (description is not null) project.Description = description.Trim();
+        if (author is not null) project.Author = author.Trim();
+        if (authorization is not null) project.Authorization = authorization.Trim();
+
+        project.UpdatedAt = DateTime.Now;
+        db.SaveProject(project);
+
+        return new UpdateProjectOutcome(true, project.Name, null);
+    }
+
+    /// <summary>
     /// 创建项目并导入目标文件。
     /// 会把目标文件复制进项目目录（可通过设置关闭）——§25「可重复测试」要求
     /// 事后仍能对同一份样本重跑，只留路径是不够的（文件可能被替换或删除）。
@@ -463,3 +499,6 @@ public sealed class CreateProjectOutcome
 /// </summary>
 public sealed record DeleteProjectOutcome(
     bool Success, bool Permanent, string? ProjectName, string? Error, bool RecycleUnavailable = false);
+
+/// <summary>更新项目元数据的结果。</summary>
+public sealed record UpdateProjectOutcome(bool Success, string? ProjectName, string? Error);

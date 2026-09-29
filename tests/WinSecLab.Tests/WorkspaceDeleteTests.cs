@@ -122,4 +122,75 @@ public class WorkspaceDeleteTests : IDisposable
         Assert.False(Directory.Exists(dir), "永久删除后目录必须不存在");
         Assert.DoesNotContain(_workspace.ListProjects(), p => p.Id == id);
     }
+
+    // ─────────────────────────────── 项目元数据更新 ───────────────────────────────
+
+    [Fact]
+    public void UpdateProject_ChangesNameAndKeepsDirectory()
+    {
+        var id = CreateProject("旧名字");
+        var dirBefore = _workspace.ResolveProjectDirectory(id);
+        Assert.NotNull(dirBefore);
+
+        var outcome = _workspace.UpdateProject(id, name: "新名字", description: "补充说明");
+
+        Assert.True(outcome.Success, outcome.Error);
+        Assert.Equal("新名字", outcome.ProjectName);
+
+        var updated = _workspace.ListProjects().First(p => p.Id == id);
+        Assert.Equal("新名字", updated.Name);
+        Assert.Equal("补充说明", updated.Description);
+
+        // 目录名是创建时的快照，改名不应动它（否则报告里记录的路径会断）
+        Assert.Equal(dirBefore, _workspace.ResolveProjectDirectory(id));
+        Assert.True(Directory.Exists(dirBefore));
+    }
+
+    [Fact]
+    public void UpdateProject_NullFieldsKeepOldValue()
+    {
+        var id = CreateProject("原名");
+        Assert.True(_workspace.UpdateProject(id, author: "张三").Success);
+
+        // 只改描述，作者和名字应保持
+        var outcome = _workspace.UpdateProject(id, description: "只改描述");
+        Assert.True(outcome.Success, outcome.Error);
+
+        var updated = _workspace.ListProjects().First(p => p.Id == id);
+        Assert.Equal("原名", updated.Name);
+        Assert.Equal("张三", updated.Author);
+        Assert.Equal("只改描述", updated.Description);
+    }
+
+    [Fact]
+    public void UpdateProject_EmptyNameIsRejected()
+    {
+        var id = CreateProject("原名");
+
+        var outcome = _workspace.UpdateProject(id, name: "   ");
+
+        Assert.False(outcome.Success);
+        Assert.Contains("不能为空", outcome.Error ?? "");
+        Assert.Equal("原名", _workspace.ListProjects().First(p => p.Id == id).Name);
+    }
+
+    [Fact]
+    public void UpdateProject_OverlongNameIsRejected()
+    {
+        var id = CreateProject("原名");
+
+        var outcome = _workspace.UpdateProject(id, name: new string('x', 81));
+
+        Assert.False(outcome.Success);
+        Assert.Contains("过长", outcome.Error ?? "");
+    }
+
+    [Fact]
+    public void UpdateProject_NonExistent_ReturnsError()
+    {
+        var outcome = _workspace.UpdateProject("WS-19990101-999", name: "x");
+
+        Assert.False(outcome.Success);
+        Assert.False(string.IsNullOrWhiteSpace(outcome.Error));
+    }
 }

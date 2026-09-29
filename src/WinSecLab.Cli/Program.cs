@@ -356,6 +356,11 @@ public static class Program
         if (!string.IsNullOrWhiteSpace(deleteTarget))
             return RunDeleteProject(workspace, deleteTarget, options.Has("--permanent"));
 
+        // 更新项目元数据：--edit <编号> 配合 --name / --description / --author / --authorization
+        var editTarget = options.Get("--edit");
+        if (!string.IsNullOrWhiteSpace(editTarget))
+            return RunEditProject(workspace, editTarget, options);
+
         var projects = workspace.ListProjects();
 
         Console.WriteLine($"工作区：{workspace.Root}");
@@ -376,6 +381,7 @@ public static class Program
         }
         Console.WriteLine();
         Console.WriteLine($"共 {projects.Count} 个项目。");
+        Console.WriteLine("编辑项目：wsx projects --edit <项目编号> --name \"新名字\"");
         Console.WriteLine("删除项目：wsx projects --delete <项目编号>（默认移入回收站，加 --permanent 彻底删除）");
         return 0;
     }
@@ -398,6 +404,27 @@ public static class Program
         else
             Console.WriteLine($"已把项目 {outcome.ProjectName} 移入回收站（可从系统回收站恢复）。");
 
+        return 0;
+    }
+
+    /// <summary>
+    /// 更新项目元数据。未提供的字段保持不变（传 null 语义）。
+    /// </summary>
+    private static int RunEditProject(WorkspaceService workspace, string projectId, CliOptions options)
+    {
+        var outcome = workspace.UpdateProject(projectId,
+            name: options.Get("--name"),
+            description: options.Get("--description"),
+            author: options.Get("--author"),
+            authorization: options.Get("--authorization"));
+
+        if (!outcome.Success)
+        {
+            Console.Error.WriteLine($"更新失败：{outcome.Error}");
+            return 1;
+        }
+
+        Console.WriteLine($"已更新项目 {outcome.ProjectName}。");
         return 0;
     }
 
@@ -629,6 +656,8 @@ wsx —— WinSecLab Windows 应用程序安全测试平台（命令行）
   wsx projects --delete <编号>        删除项目（默认移入回收站，可恢复）
   wsx projects --delete <编号> --permanent
                                      彻底删除项目（不可恢复）
+  wsx projects --edit <编号> --name "新名字" [--description "..."] [--author "..."]
+                                     更新项目信息（未提供的字段保持不变）
   wsx plugins [--refresh]            列出插件并探测外部工具
   wsx doctor                         环境体检（工作区 / 权限 / 外部工具）
   wsx help                           显示本帮助

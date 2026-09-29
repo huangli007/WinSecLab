@@ -183,6 +183,30 @@ public sealed class AppState : ObservableObject
         return outcome;
     }
 
+    /// <summary>
+    /// 更新当前项目的元数据（名称/描述/执行人/授权信息）。
+    /// 不重命名项目目录 —— 目录名是创建时的快照，改它会让报告里记录的路径断开。
+    /// </summary>
+    public UpdateProjectOutcome UpdateCurrentProject(string name, string description,
+        string author, string authorization)
+    {
+        if (CurrentProject is null)
+            return new UpdateProjectOutcome(false, null, "未选择项目。");
+
+        var outcome = Workspace.UpdateProject(CurrentProject.Id, name, description, author, authorization);
+        if (!outcome.Success) return outcome;
+
+        // 重新载入，让标题栏/卡片显示新名字（RefreshProjects 会重建列表）
+        var id = CurrentProject.Id;
+        RefreshProjects();
+        var updated = Projects.FirstOrDefault(p => p.Id == id);
+        if (updated is not null) CurrentProject = updated;
+
+        AppendLog($"已更新项目信息：{outcome.ProjectName}");
+        return outcome;
+    }
+
+
     /// <summary>导入新目标并创建项目。</summary>
     public TestProject? ImportTarget(string targetPath, string? name, TestProfileKind profile, string? description)
     {

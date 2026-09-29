@@ -158,6 +158,32 @@ public partial class HomeView : UserControl, IRefreshable
         if (Window.GetWindow(this) is MainWindow main) main.NavigateTo("Run");
     }
 
+    /// <summary>编辑项目元数据（名称/描述/执行人/授权）。</summary>
+    private void EditProject_OnClick(object sender, RoutedEventArgs e)
+    {
+        var project = _state.CurrentProject;
+        if (project is null) return;
+
+        if (_state.IsRunning)
+        {
+            MessageBox.Show("分析正在进行中，请等分析结束后再修改项目信息。", "WinSecLab",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var dialog = new ProjectEditDialog(project) { Owner = Window.GetWindow(this) };
+        if (dialog.ShowDialog() != true) return;
+
+        var outcome = _state.UpdateCurrentProject(
+            dialog.ProjectName, dialog.Description, dialog.Author, dialog.Authorization);
+
+        if (!outcome.Success)
+        {
+            MessageBox.Show($"保存失败：{outcome.Error}", "WinSecLab",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     /// <summary>
     /// 删除项目。破坏性操作，必须明确确认；UI 只做"移入回收站"（可恢复），
     /// 彻底删除留给命令行的 --permanent，避免误点永久丢失分析成果。

@@ -123,6 +123,9 @@
                         <Border Style="{StaticResource Divider}" />
 
                         <StackPanel Orientation="Horizontal">
+                            <Button Content="编辑信息" Style="{StaticResource Btn.Ghost}" Margin="0,0,8,0"
+                                    Click="EditProject_OnClick"
+                                    ToolTip="修改项目名称、描述、执行人与授权信息" />
                             <Button Content="打开目录" Style="{StaticResource Btn.Secondary}" Margin="0,0,8,0"
                                     Click="RevealProject_OnClick" />
                             <Button Content="前往测试执行" Style="{StaticResource Btn.Primary}" Margin="0,0,8,0"
