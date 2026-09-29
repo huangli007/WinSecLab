@@ -101,8 +101,8 @@ dotnet test tests/WinSecLab.Tests/WinSecLab.Tests.csproj -c Release
 | .NET 分析 | 程序集标识 / 命名空间-类型-成员树 / 引用程序集 / 方法引用 / 混淆与 NativeAOT 识别 |
 | 依赖解析 | 三级搜索定位实际 DLL，标出**从用户可写目录加载**的模块（DLL 劫持面） |
 | 进程监控 | WMI 事件（管理员）+ 1 秒轮询双通道 + **ETW 内核进程事件**（管理员，内核级带准确父 PID），进程树归因 + 模块加载 diff |
-| 文件监控 | FileSystemWatcher + 批量聚合 + 相关性过滤 + 限流 + **ETW 文件创建事件**（管理员，`FileIo_Create` 带完整路径 + PID，补"谁创建的文件"归因） |
-| 注册表监控 | WMI 触发 + 快照差分（覆盖 15 个常见持久化位置） |
+| 文件监控 | FileSystemWatcher + 批量聚合 + 相关性过滤 + 限流 + **ETW 文件创建/写入事件**（管理员，`FileIo_Create` 带完整路径 + PID，`FileIo_Write` 经 FileObject 关联反查路径，补"谁创建/写了哪个文件"归因） |
+| 注册表监控 | WMI 触发 + 快照差分（覆盖 15 个常见持久化位置）+ **ETW 注册表事件**（管理员，`Registry_TypeGroup1` 的 KeyName 带完整键路径 + PID，补"哪个进程改的键"归因） |
 | 网络观测 | `GetExtendedTcpTable/UdpTable`，**按 owning PID 精确归因** + DNS 缓存解析 |
 | HTTP 代理 | 本地正向代理，明文 HTTP 完整解析（Chunked / gzip），HTTPS 隧道透传 + Repeater 重放 |
 | YARA | 内置 20 条自研启发式规则；同一套规则可导出为标准 `.yar` 交给真正的 yara.exe 复跑 |

@@ -52,6 +52,9 @@ public sealed class EtwKernelSession : IDisposable
     private static readonly Guid KernelFileProvider =
         new("EDD08927-9CC4-4E65-B970-C2560FB5C289");
 
+    private static readonly Guid KernelRegistryProvider =
+        new("70EB4F03-C1DE-4F73-A051-33D13D5413BD");
+
     // ProcessStart（EventId 1）的固定 payload 布局：
     //   struct Process_TypeGroup1 {
     //     UInt32 UniqueProcessKey;   // offset 0
@@ -77,6 +80,32 @@ public sealed class EtwKernelSession : IDisposable
     //   uint32 ShareAccess;     // 20
     //   string OpenPath;        // 24（null 结尾宽字符串，含盘符的完整路径）
     private const int FileCreate_OpenPathOffset = 24;
+
+    // Registry_TypeGroup1 的 payload 布局（EventType 10~27，见微软 MOF）：
+    //   sint64 InitialTime;   // 0（8 字节）
+    //   uint32 Status;        // 8
+    //   uint32 Index;         // 12
+    //   uint32 KeyHandle;     // 16
+    //   string KeyName;       // 20（null 结尾宽字符串，注册表键的完整路径）
+    // EventType → 操作：10=Create 12=Delete 14=SetValue 15=DeleteValue 24=KCBCreate
+    private const int Registry_KeyNameOffset = 20;
+
+    // FileIo_ReadWrite（EventType 67=Read 68=Write）的 payload 布局：
+    //   uint64 Offset;     // 0（8 字节）
+    //   uint32 IrpPtr;     // 8
+    //   uint32 TTID;       // 12
+    //   uint32 FileObject; // 16  ← 关键：关联 FileIo_Create 的路径
+    //   uint32 FileKey;    // 20
+    //   uint32 IoSize;     // 24
+    //   uint32 IoFlags;    // 28
+    private const int FileReadWrite_FileObjectOffset = 16;
+
+    // FileIo_Create 的 FileObject 偏移（见 FileCreate_OpenPathOffset 的注释布局）
+    private const int FileCreate_FileObjectOffset = 8;
+
+    // FileObject → 路径 的映射。FileObject 是内核指针，文件关闭后会被系统复用，
+    // 所以映射必须有容量上限，超限时整体清空（宁可丢旧映射，不可串路径）。
+    private readonly Dictionary<uint, string> _fileObjectPaths = new(8192);
 
     private long _traceHandle;
     private long _consumeHandle;
@@ -152,6 +181,20 @@ public sealed class EtwKernelSession : IDisposable
         {
             // 文件 Provider 失败不影响进程监控 —— 记录并继续
             LastError = $"EnableTraceEx2(File) 失败：0x{ret:X8}（{new Win32Exception((int)ret).Message}）";
+        }
+
+        // Kernel-Registry：注册表键创建/删除/设值（KeyName 含完整路径 + PID）
+        var registryGuid = KernelRegistryProvider;
+        ret = EtwNative.EnableTraceEx2(
+            _traceHandle, ref registryGuid,
+            EtwNative.EVENT_CONTROL_CODE_ENABLE_PROVIDER,
+            EtwNative.TRACE_LEVEL_INFO,
+            EtwNative.TRACE_MATCH_ALL_KEYWORD, EtwNative.TRACE_MATCH_ALL_KEYWORD,
+            0, ref enableParams);
+
+        if (ret != 0)
+        {
+            LastError = $"EnableTraceEx2(Registry) 失败：0x{ret:X8}（{new Win32Exception((int)ret).Message}）";
         }
 
         // ── 3) 打开实时消费 ──
@@ -259,9 +302,12 @@ public sealed class EtwKernelSession : IDisposable
             MaximumBuffers = 32,
             LogFileMode = EtwNative.EVENT_TRACE_REAL_TIME_MODE | EtwNative.EVENT_TRACE_SYSTEM_LOGGER_MODE,
             FlushTimer = 1,
-            // 进程事件 + 文件创建事件。注意：要收 FileIo_Create 必须开 FILE_IO_INIT（0x04000000），
-            // 而不是 FILE_IO（0x02000000，那是 FileIo_OpEnd）—— 官方文档明确区分，开错就采不到。
-            EnableFlags = EtwNative.EVENT_TRACE_FLAG_PROCESS | EtwNative.EVENT_TRACE_FLAG_FILE_IO_INIT,
+            // 进程事件 + 文件创建事件 + 注册表事件。
+            // 注意：收 FileIo_Create 必须用 FILE_IO_INIT(0x04000000) 而非 FILE_IO(0x02000000)，
+            // 收注册表用 REGISTRY(0x00020000)。官方文档对 EnableFlags 有严格区分，开错采不到。
+            EnableFlags = EtwNative.EVENT_TRACE_FLAG_PROCESS
+                          | EtwNative.EVENT_TRACE_FLAG_FILE_IO_INIT
+                          | EtwNative.EVENT_TRACE_FLAG_REGISTRY,
             LoggerNameOffset = (uint)nameOffset,
             Tail = tail,
         };
@@ -301,7 +347,12 @@ public sealed class EtwKernelSession : IDisposable
             }
             else if (header.ProviderId == KernelFileProvider)
             {
-                evt = ParseFileEvent(header.ProcessId, header.ThreadId, header.TimeStamp,
+                evt = HandleFileEvent(header.ProcessId, header.ThreadId, header.TimeStamp,
+                    header.EventDescriptor.Id, payload);
+            }
+            else if (header.ProviderId == KernelRegistryProvider)
+            {
+                evt = ParseRegistryEvent(header.ProcessId, header.ThreadId, header.TimeStamp,
                     header.EventDescriptor.Id, payload);
             }
             else
@@ -318,9 +369,59 @@ public sealed class EtwKernelSession : IDisposable
     }
 
     /// <summary>
-    /// 解析内核文件事件的 payload（纯函数，可单测）。
-    /// 目前只解析 FileIo_Create（EventId 64）：OpenPath 在固定偏移 24，含完整路径。
-    /// FileIo_Write/Delete 需要 FileObject 关联 FileIo_Name，后续再做。
+    /// 处理文件事件，并维护 FileObject → 路径 的关联映射。
+    ///
+    /// FileIo_Create（64）带完整 OpenPath，写入映射；FileIo_Write（68）/Read（67）
+    /// 只带 FileObject，靠映射反查路径。FileObject 是内核指针会被复用，
+    /// 所以映射有容量上限（见 _fileObjectPaths 声明）。
+    /// </summary>
+    internal EtwEvent? HandleFileEvent(uint pid, uint tid, long fileTime, ushort eventId, byte[] payload)
+    {
+        var timestamp = FileTimeToDateTime(fileTime);
+
+        if (eventId == 64)   // FileIo_Create：记录 FileObject → OpenPath 映射，并产出 FileCreate
+        {
+            if (payload.Length < FileCreate_OpenPathOffset + 2) return null;
+            var openPath = ReadNullTerminatedWideString(payload, FileCreate_OpenPathOffset);
+            if (string.IsNullOrEmpty(openPath)) return null;
+
+            if (payload.Length >= FileCreate_FileObjectOffset + 4)
+            {
+                var fileObject = BitConverter.ToUInt32(payload, FileCreate_FileObjectOffset);
+                if (fileObject != 0) RememberPath(fileObject, openPath);
+            }
+
+            return new EtwEvent(timestamp, pid, tid, EtwEventKind.FileCreate,
+                "", openPath, "File Create", 0);
+        }
+
+        if (eventId is 67 or 68)   // FileIo_Read/Write：通过 FileObject 反查路径
+        {
+            if (payload.Length < FileReadWrite_FileObjectOffset + 4) return null;
+            var fileObject = BitConverter.ToUInt32(payload, FileReadWrite_FileObjectOffset);
+            if (fileObject == 0) return null;
+
+            // 只对"写入"产出事件（读操作量大且安全分析价值低）
+            if (eventId != 68) return null;
+
+            if (!_fileObjectPaths.TryGetValue(fileObject, out var path) || string.IsNullOrEmpty(path))
+                return null;
+
+            return new EtwEvent(timestamp, pid, tid, EtwEventKind.FileWrite,
+                "", path, "File Write", 0);
+        }
+
+        return null;
+    }
+
+    private void RememberPath(uint fileObject, string path)
+    {
+        if (_fileObjectPaths.Count >= 8192) _fileObjectPaths.Clear();   // 容量保护，防指针复用串路径
+        _fileObjectPaths[fileObject] = path;
+    }
+
+    /// <summary>
+    /// 解析 FileIo_Create 的字段（纯函数，可单测，不含关联逻辑）。
     /// </summary>
     internal static EtwEvent? ParseFileEvent(uint pid, uint tid, long fileTime,
         ushort eventId, byte[] payload)
@@ -338,6 +439,35 @@ public sealed class EtwKernelSession : IDisposable
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// 解析内核注册表事件的 payload（纯函数，可单测）。
+    /// Registry_TypeGroup1：KeyName 在固定偏移 20（sint64 + 3×uint32 之后），含完整键路径。
+    /// EventType：10=CreateKey 12=DeleteKey 14=SetValue 15=DeleteValue 24=KCBCreate。
+    /// </summary>
+    internal static EtwEvent? ParseRegistryEvent(uint pid, uint tid, long fileTime,
+        ushort eventType, byte[] payload)
+    {
+        if (payload.Length < Registry_KeyNameOffset + 2) return null;
+        var timestamp = FileTimeToDateTime(fileTime);
+
+        var keyName = ReadNullTerminatedWideString(payload, Registry_KeyNameOffset);
+        if (string.IsNullOrEmpty(keyName)) return null;
+
+        var (kind, operation) = eventType switch
+        {
+            10 => (EtwEventKind.RegistryCreate, "Registry Create Key"),
+            12 => (EtwEventKind.RegistryDelete, "Registry Delete Key"),
+            14 => (EtwEventKind.RegistrySet, "Registry Set Value"),
+            15 => (EtwEventKind.RegistryDelete, "Registry Delete Value"),
+            24 => (EtwEventKind.RegistryCreate, "Registry KCB Create"),
+            _ => ((int)EtwEventKind.RegistrySet, (string?)null)!,
+        };
+
+        if (operation is null) return null;
+
+        return new EtwEvent(timestamp, pid, tid, kind, "", keyName, operation, 0);
     }
 
     /// <summary>从 payload 指定偏移读取 null 结尾的宽字符串。</summary>
