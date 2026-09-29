@@ -157,4 +157,56 @@ public partial class HomeView : UserControl, IRefreshable
     {
         if (Window.GetWindow(this) is MainWindow main) main.NavigateTo("Run");
     }
+
+    /// <summary>
+    /// 删除项目。破坏性操作，必须明确确认；UI 只做"移入回收站"（可恢复），
+    /// 彻底删除留给命令行的 --permanent，避免误点永久丢失分析成果。
+    /// </summary>
+    private void DeleteProject_OnClick(object sender, RoutedEventArgs e)
+    {
+        var project = _state.CurrentProject;
+        if (project is null) return;
+
+        if (_state.IsRunning)
+        {
+            MessageBox.Show("分析正在进行中，请等分析结束后再删除项目。", "WinSecLab",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            $"确定要删除项目「{project.Name}」吗？\n\n"
+            + $"项目编号：{project.Id}\n"
+            + "该项目的证据、发现与报告会一并处理。\n\n"
+            + "项目将移入系统回收站，之后仍可从回收站恢复。",
+            "删除项目",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);   // 默认「否」，避免顺手回车误删
+
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var outcome = _state.DeleteProject(project.Id);
+
+        // 回收站不可用（受限环境常见）：不静默永久删除，而是明确问一次
+        if (!outcome.Success && outcome.RecycleUnavailable)
+        {
+            var fallback = MessageBox.Show(
+                $"无法移入回收站：{outcome.Error}\n\n"
+                + "是否改为彻底删除？此操作不可恢复。",
+                "回收站不可用",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+
+            if (fallback == MessageBoxResult.Yes)
+                outcome = _state.DeleteProject(project.Id, permanent: true);
+        }
+
+        if (!outcome.Success)
+        {
+            MessageBox.Show($"删除失败：{outcome.Error}", "WinSecLab",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
 }

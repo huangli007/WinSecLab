@@ -135,6 +135,54 @@ public sealed class WorkspaceService
     }
 
     /// <summary>
+    /// 删除项目。
+    ///
+    /// 默认送进回收站（可恢复），永久删除需显式 <paramref name="permanent"/>=true。
+    /// 删除前必须先释放 SQLite 连接池 —— 连接池持有 analysis.db 的文件句柄，
+    /// 不释放的话目录删不掉（报"正被另一进程使用"），这是实测踩过的坑。
+    /// </summary>
+    public DeleteProjectOutcome DeleteProject(string projectIdOrFolder, bool permanent = false)
+    {
+        var dir = ResolveProjectDirectory(projectIdOrFolder);
+        if (dir is null)
+            return new DeleteProjectOutcome(false, false, null, "找不到该项目。");
+
+        // 路径安全兜底：只允许删除 Projects 根目录下的直接子目录，
+        // 防止传进来 "../" 之类的东西删到工作区外面
+        var projectsRoot = Path.GetFullPath(WorkspaceLayout.ProjectsRoot(Root));
+        var fullDir = Path.GetFullPath(dir);
+        var parent = Path.GetDirectoryName(fullDir.TrimEnd(Path.DirectorySeparatorChar));
+        if (parent is null || !string.Equals(parent, projectsRoot.TrimEnd(Path.DirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase))
+            return new DeleteProjectOutcome(false, false, null, "拒绝删除：目标不在工作区 Projects 目录下。");
+
+        var name = Path.GetFileName(fullDir);
+
+        // 先断开所有 SQLite 连接，否则 analysis.db 被锁住删不掉
+        ProjectDatabase.ReleasePools();
+
+        if (!permanent)
+        {
+            if (RecycleBin.TryMoveToRecycleBin(fullDir, out var recycleError))
+                return new DeleteProjectOutcome(true, false, name, null);
+
+            // 回收站不可用时不静默转永久删除 —— 交给调用方决定（UI 会询问，CLI 用 --permanent）
+            return new DeleteProjectOutcome(false, false, name,
+                $"移入回收站失败：{recycleError}", RecycleUnavailable: true);
+        }
+
+        try
+        {
+            Directory.Delete(fullDir, recursive: true);
+            return new DeleteProjectOutcome(true, true, name, null);
+        }
+        catch (Exception ex)
+        {
+            return new DeleteProjectOutcome(false, true, name, $"删除失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// 创建项目并导入目标文件。
     /// 会把目标文件复制进项目目录（可通过设置关闭）——§25「可重复测试」要求
     /// 事后仍能对同一份样本重跑，只留路径是不够的（文件可能被替换或删除）。
@@ -407,3 +455,11 @@ public sealed class CreateProjectOutcome
     public ProjectLayout? Layout { get; set; }
     public List<string> Warnings { get; } = new();
 }
+
+/// <summary>
+/// 删除项目的结果。<paramref name="Permanent"/> 区分是进了回收站还是彻底删除；
+/// <paramref name="RecycleUnavailable"/> 为 true 表示回收站不可用（受限环境常见），
+/// 此时调用方可显式选择永久删除。
+/// </summary>
+public sealed record DeleteProjectOutcome(
+    bool Success, bool Permanent, string? ProjectName, string? Error, bool RecycleUnavailable = false);

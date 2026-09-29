@@ -157,6 +157,32 @@ public sealed class AppState : ObservableObject
         Raise(nameof(Projects));
     }
 
+    /// <summary>
+    /// 删除项目（默认移入回收站，可恢复）。分析进行中不允许删除 —— 会话正在写 analysis.db。
+    /// UI 默认只做"移入回收站"；彻底删除需显式指定，避免误点永久丢失成果。
+    /// </summary>
+    public DeleteProjectOutcome DeleteProject(string projectId, bool permanent = false)
+    {
+        DevelopmentGuard.EnsureNotRunning(IsRunning, "删除项目");
+
+        var wasCurrent = string.Equals(CurrentProject?.Id, projectId, StringComparison.OrdinalIgnoreCase);
+        var outcome = Workspace.DeleteProject(projectId, permanent);
+
+        if (!outcome.Success) return outcome;
+
+        AppendLog(outcome.Permanent
+            ? $"项目 {outcome.ProjectName} 已彻底删除。"
+            : $"项目 {outcome.ProjectName} 已移入回收站（可从系统回收站恢复）。");
+
+        if (wasCurrent) CurrentProject = null;
+        RefreshProjects();
+
+        // 删掉当前项目后自动切到列表里的第一个，避免界面停在空状态
+        if (CurrentProject is null && Projects.Count > 0) OpenProject(Projects[0]);
+
+        return outcome;
+    }
+
     /// <summary>导入新目标并创建项目。</summary>
     public TestProject? ImportTarget(string targetPath, string? name, TestProfileKind profile, string? description)
     {

@@ -330,6 +330,12 @@ public static class Program
     private static int RunProjects(CliOptions options)
     {
         var workspace = new WorkspaceService(options.Get("--workspace"));
+
+        // 删除项目：必须显式给 --delete <编号> 才会执行（破坏性操作不默认触发）
+        var deleteTarget = options.Get("--delete");
+        if (!string.IsNullOrWhiteSpace(deleteTarget))
+            return RunDeleteProject(workspace, deleteTarget, options.Has("--permanent"));
+
         var projects = workspace.ListProjects();
 
         Console.WriteLine($"工作区：{workspace.Root}");
@@ -350,6 +356,28 @@ public static class Program
         }
         Console.WriteLine();
         Console.WriteLine($"共 {projects.Count} 个项目。");
+        Console.WriteLine("删除项目：wsx projects --delete <项目编号>（默认移入回收站，加 --permanent 彻底删除）");
+        return 0;
+    }
+
+    /// <summary>
+    /// 删除项目。默认移入回收站（可从系统回收站恢复），--permanent 才彻底删除。
+    /// </summary>
+    private static int RunDeleteProject(WorkspaceService workspace, string projectId, bool permanent)
+    {
+        var outcome = workspace.DeleteProject(projectId, permanent);
+
+        if (!outcome.Success)
+        {
+            Console.Error.WriteLine($"删除失败：{outcome.Error}");
+            return 1;
+        }
+
+        if (outcome.Permanent)
+            Console.WriteLine($"已彻底删除项目 {outcome.ProjectName}（不可恢复）。");
+        else
+            Console.WriteLine($"已把项目 {outcome.ProjectName} 移入回收站（可从系统回收站恢复）。");
+
         return 0;
     }
 
@@ -577,6 +605,9 @@ wsx —— WinSecLab Windows 应用程序安全测试平台（命令行）
   wsx monitor <目标文件> [选项]      仅执行动态监控（等价于 analyze --dynamic-only）
   wsx report  <项目编号>             基于已落库结果重新生成报告
   wsx projects                       列出工作区内的项目
+  wsx projects --delete <编号>        删除项目（默认移入回收站，可恢复）
+  wsx projects --delete <编号> --permanent
+                                     彻底删除项目（不可恢复）
   wsx plugins [--refresh]            列出插件并探测外部工具
   wsx doctor                         环境体检（工作区 / 权限 / 外部工具）
   wsx help                           显示本帮助
