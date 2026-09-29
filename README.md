@@ -100,7 +100,7 @@ dotnet test tests/WinSecLab.Tests/WinSecLab.Tests.csproj -c Release
 | 熵值分析 | 整体熵 + 逐节区熵，≥7.2 判定加壳 / 加密载荷 |
 | .NET 分析 | 程序集标识 / 命名空间-类型-成员树 / 引用程序集 / 方法引用 / 混淆与 NativeAOT 识别 |
 | 依赖解析 | 三级搜索定位实际 DLL，标出**从用户可写目录加载**的模块（DLL 劫持面） |
-| 进程监控 | WMI 事件（管理员）+ 1 秒轮询双通道，进程树归因 + 模块加载 diff |
+| 进程监控 | WMI 事件（管理员）+ 1 秒轮询双通道 + **ETW 内核进程事件**（管理员，内核级带准确父 PID），进程树归因 + 模块加载 diff |
 | 文件监控 | FileSystemWatcher + 批量聚合 + 相关性过滤 + 限流 |
 | 注册表监控 | WMI 触发 + 快照差分（覆盖 15 个常见持久化位置） |
 | 网络观测 | `GetExtendedTcpTable/UdpTable`，**按 owning PID 精确归因** + DNS 缓存解析 |

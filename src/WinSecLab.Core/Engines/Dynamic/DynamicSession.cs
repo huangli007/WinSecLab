@@ -33,6 +33,7 @@ public sealed class DynamicSession : IDisposable
     private Process? _targetProcess;
     private Timer? _flushTimer;
     private Timer? _connectionSyncTimer;
+    private EtwKernelSession? _etwSession;
     private int _flushInProgress;
     private long _droppedEvents;
 
@@ -263,11 +264,16 @@ public sealed class DynamicSession : IDisposable
                 _processMonitor.Start(0, elevated);
             }
 
+            // ETW 内核进程事件：管理员时启用，作为轮询的精确补充（内核级、带准确父 PID、低开销）
+            StartEtwIfPossible(elevated, _processMonitor.IsInTargetTree);
+
             WireAttribution();
         }
         else
         {
             _processMonitor?.Start(0, elevated);
+            Func<uint, bool>? inTree = _processMonitor is null ? null : _processMonitor.IsInTargetTree;
+            StartEtwIfPossible(elevated, inTree);
             WireAttribution();
         }
 
@@ -523,6 +529,73 @@ public sealed class DynamicSession : IDisposable
         {
             // 忽略
         }
+
+        try
+        {
+            _etwSession?.Stop();
+        }
+        catch
+        {
+            // 忽略
+        }
+    }
+
+    /// <summary>
+    /// 管理员时启动 ETW 内核进程事件通道，作为轮询监控的精确补充。
+    /// ETW 提供内核级、带准确父 PID、低开销的进程创建/终止事件 —— 正好补上
+    /// "标准用户退化为 1 秒轮询"的短板（管理员时轮询和 ETW 双通道并行，互不干扰）。
+    /// 标准用户或启动失败时静默降级，绝不影响主流程。
+    /// </summary>
+    private void StartEtwIfPossible(bool elevated, Func<uint, bool>? isInTargetTree)
+    {
+        if (!elevated) return;
+
+        try
+        {
+            var session = new EtwKernelSession();
+            session.OnEvent += e => OnEtwEvent(e, isInTargetTree);
+
+            if (!session.Start())
+            {
+                _warnings.Add($"ETW 进程事件通道未启用：{session.LastError}（已降级为轮询监控）");
+                session.Dispose();
+                return;
+            }
+
+            _etwSession = session;
+        }
+        catch (Exception ex)
+        {
+            _warnings.Add($"ETW 进程事件通道启动异常：{ex.Message}（已降级为轮询监控）");
+        }
+    }
+
+    /// <summary>把 ETW 事件映射为统一的 MonitorEvent 并发布（在 ETW 消费线程上，Publish 内部有锁）。</summary>
+    private void OnEtwEvent(EtwEvent e, Func<uint, bool>? isInTargetTree)
+    {
+        var type = e.EventKind switch
+        {
+            EtwEventKind.ProcessStart => MonitorEventType.ProcessStart,
+            EtwEventKind.ProcessStop => MonitorEventType.ProcessStop,
+            _ => MonitorEventType.Note,
+        };
+        if (type == MonitorEventType.Note) return;
+
+        var inTree = isInTargetTree?.Invoke(e.ProcessId) ?? false;
+
+        Publish(new MonitorEvent
+        {
+            Type = type,
+            Timestamp = e.Timestamp,
+            ProcessId = e.ProcessId,
+            ProcessName = string.IsNullOrEmpty(e.ProcessName) ? "(pid-" + e.ProcessId + ")" : e.ProcessName,
+            ProcessPath = e.ProcessName,
+            ParentProcessId = e.ParentPid,
+            Operation = e.Operation,
+            Target = string.IsNullOrEmpty(e.Target) ? e.ProcessName : e.Target,
+            IsFromTargetTree = inTree,
+            Source = "etw-kernel",
+        });
     }
 
     /// <summary>导出会话产物到项目目录。</summary>
