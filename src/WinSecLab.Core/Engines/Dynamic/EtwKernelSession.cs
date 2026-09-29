@@ -49,6 +49,9 @@ public sealed class EtwKernelSession : IDisposable
     private static readonly Guid KernelProcessProvider =
         new("22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716");
 
+    private static readonly Guid KernelFileProvider =
+        new("EDD08927-9CC4-4E65-B970-C2560FB5C289");
+
     // ProcessStart（EventId 1）的固定 payload 布局：
     //   struct Process_TypeGroup1 {
     //     UInt32 UniqueProcessKey;   // offset 0
@@ -64,6 +67,16 @@ public sealed class EtwKernelSession : IDisposable
 
     // ProcessEnd（EventId 2）payload：只有 UniqueProcessKey + ProcessId
     private const int ProcessEnd_PidOffset = 4;
+
+    // FileIo_Create（EventId 64）的 payload 布局（继承 FileIo → DiskIo_TypeGroup1）：
+    //   uint32 IrpPtr;          // 0
+    //   uint32 TTID;            // 4
+    //   uint32 FileObject;      // 8
+    //   uint32 CreateOptions;   // 12
+    //   uint32 FileAttributes;  // 16
+    //   uint32 ShareAccess;     // 20
+    //   string OpenPath;        // 24（null 结尾宽字符串，含盘符的完整路径）
+    private const int FileCreate_OpenPathOffset = 24;
 
     private long _traceHandle;
     private long _consumeHandle;
@@ -103,16 +116,17 @@ public sealed class EtwKernelSession : IDisposable
             return false;
         }
 
-        // ── 2) 启用 Kernel-Process provider ──
-        var providerGuid = KernelProcessProvider;
+        // ── 2) 启用 Kernel-Process 与 Kernel-File provider ──
         var enableParams = new EtwNative.ENABLE_TRACE_PARAMETERS
         {
             Version = 2,
             EnableProperty = EtwNative.EVENT_ENABLE_PROPERTY_SID,
         };
 
+        // Kernel-Process：进程创建/终止（带父 PID）
+        var processGuid = KernelProcessProvider;
         ret = EtwNative.EnableTraceEx2(
-            _traceHandle, ref providerGuid,
+            _traceHandle, ref processGuid,
             EtwNative.EVENT_CONTROL_CODE_ENABLE_PROVIDER,
             EtwNative.TRACE_LEVEL_INFO,
             EtwNative.TRACE_MATCH_ALL_KEYWORD, EtwNative.TRACE_MATCH_ALL_KEYWORD,
@@ -120,9 +134,24 @@ public sealed class EtwKernelSession : IDisposable
 
         if (ret != 0)
         {
-            LastError = $"EnableTraceEx2 失败：0x{ret:X8}（{new Win32Exception((int)ret).Message}）";
+            LastError = $"EnableTraceEx2(Process) 失败：0x{ret:X8}（{new Win32Exception((int)ret).Message}）";
             StopTrace();
             return false;
+        }
+
+        // Kernel-File：文件创建（FileIo_Create 的 OpenPath 含完整路径 + PID）
+        var fileGuid = KernelFileProvider;
+        ret = EtwNative.EnableTraceEx2(
+            _traceHandle, ref fileGuid,
+            EtwNative.EVENT_CONTROL_CODE_ENABLE_PROVIDER,
+            EtwNative.TRACE_LEVEL_INFO,
+            EtwNative.TRACE_MATCH_ALL_KEYWORD, EtwNative.TRACE_MATCH_ALL_KEYWORD,
+            0, ref enableParams);
+
+        if (ret != 0)
+        {
+            // 文件 Provider 失败不影响进程监控 —— 记录并继续
+            LastError = $"EnableTraceEx2(File) 失败：0x{ret:X8}（{new Win32Exception((int)ret).Message}）";
         }
 
         // ── 3) 打开实时消费 ──
@@ -230,7 +259,9 @@ public sealed class EtwKernelSession : IDisposable
             MaximumBuffers = 32,
             LogFileMode = EtwNative.EVENT_TRACE_REAL_TIME_MODE | EtwNative.EVENT_TRACE_SYSTEM_LOGGER_MODE,
             FlushTimer = 1,
-            EnableFlags = EtwNative.EVENT_TRACE_FLAG_PROCESS,  // 进程创建/终止
+            // 进程事件 + 文件创建事件。注意：要收 FileIo_Create 必须开 FILE_IO_INIT（0x04000000），
+            // 而不是 FILE_IO（0x02000000，那是 FileIo_OpEnd）—— 官方文档明确区分，开错就采不到。
+            EnableFlags = EtwNative.EVENT_TRACE_FLAG_PROCESS | EtwNative.EVENT_TRACE_FLAG_FILE_IO_INIT,
             LoggerNameOffset = (uint)nameOffset,
             Tail = tail,
         };
@@ -253,7 +284,6 @@ public sealed class EtwKernelSession : IDisposable
         try
         {
             var header = record.EventHeader;
-            if (header.ProviderId != KernelProcessProvider) return;
 
             var userData = record.UserData;
             var userDataLen = record.UserDataLength;
@@ -263,14 +293,66 @@ public sealed class EtwKernelSession : IDisposable
             var payload = new byte[userDataLen];
             Marshal.Copy(userData, payload, 0, userDataLen);
 
-            var evt = ParseProcessEvent(header.ProcessId, header.ThreadId, header.TimeStamp,
-                header.EventDescriptor.Id, payload);
+            EtwEvent? evt;
+            if (header.ProviderId == KernelProcessProvider)
+            {
+                evt = ParseProcessEvent(header.ProcessId, header.ThreadId, header.TimeStamp,
+                    header.EventDescriptor.Id, payload);
+            }
+            else if (header.ProviderId == KernelFileProvider)
+            {
+                evt = ParseFileEvent(header.ProcessId, header.ThreadId, header.TimeStamp,
+                    header.EventDescriptor.Id, payload);
+            }
+            else
+            {
+                return;
+            }
+
             if (evt is not null) OnEvent?.Invoke(evt.Value);
         }
         catch
         {
             // 单条事件解析失败不应中断整个消费流 —— ETW 事件格式偶有变体
         }
+    }
+
+    /// <summary>
+    /// 解析内核文件事件的 payload（纯函数，可单测）。
+    /// 目前只解析 FileIo_Create（EventId 64）：OpenPath 在固定偏移 24，含完整路径。
+    /// FileIo_Write/Delete 需要 FileObject 关联 FileIo_Name，后续再做。
+    /// </summary>
+    internal static EtwEvent? ParseFileEvent(uint pid, uint tid, long fileTime,
+        ushort eventId, byte[] payload)
+    {
+        if (payload.Length < FileCreate_OpenPathOffset + 2) return null;
+        var timestamp = FileTimeToDateTime(fileTime);
+
+        if (eventId == 64)   // FileIo_Create
+        {
+            var openPath = ReadNullTerminatedWideString(payload, FileCreate_OpenPathOffset);
+            if (string.IsNullOrEmpty(openPath)) return null;
+
+            return new EtwEvent(timestamp, pid, tid, EtwEventKind.FileCreate,
+                "", openPath, "File Create", 0);
+        }
+
+        return null;
+    }
+
+    /// <summary>从 payload 指定偏移读取 null 结尾的宽字符串。</summary>
+    private static string ReadNullTerminatedWideString(byte[] payload, int offset)
+    {
+        if (offset < 0 || offset >= payload.Length) return "";
+        var sb = new System.Text.StringBuilder();
+        for (var i = offset; i + 1 < payload.Length; i += 2)
+        {
+            var c = (char)BitConverter.ToUInt16(payload, i);
+            if (c == '\0') break;
+            sb.Append(c);
+            if (sb.Length > 1024) break;   // 防异常超长
+        }
+        return sb.ToString();
     }
 
     /// <summary>

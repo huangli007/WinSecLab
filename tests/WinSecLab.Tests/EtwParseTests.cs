@@ -107,4 +107,61 @@ public class EtwParseTests
         Assert.Equal((uint)100, evt.Value.ParentPid);
         Assert.Equal("", evt.Value.ProcessName);   // 没 .exe 就留空，不误填
     }
+
+    // ─────────────────────────────── Kernel-File 文件创建 ───────────────────────────────
+
+    /// <summary>构造 FileIo_Create（EventId 64）payload：6 个 uint32 + OpenPath 宽字符串。</summary>
+    private static byte[] BuildFileCreatePayload(string openPath)
+    {
+        var bytes = new List<byte>();
+        void AddU32(uint v) => bytes.AddRange(BitConverter.GetBytes(v));
+
+        AddU32(0x11111111);            // IrpPtr
+        AddU32(0x22222222);            // TTID
+        AddU32(0x33333333);            // FileObject
+        AddU32(0x44444444);            // CreateOptions
+        AddU32(0x55555555);            // FileAttributes
+        AddU32(0x66666666);            // ShareAccess
+        bytes.AddRange(Encoding.Unicode.GetBytes(openPath));   // OpenPath @ 24
+        bytes.AddRange(new byte[2]);   // \0\0
+
+        return bytes.ToArray();
+    }
+
+    [Fact]
+    public void ParseFileCreate_ExtractsOpenPathAndPid()
+    {
+        var payload = BuildFileCreatePayload(@"C:\Users\Tester\AppData\Local\Temp\dropped.exe");
+
+        var evt = EtwKernelSession.ParseFileEvent(
+            pid: 4321, tid: 99, fileTime: 0, eventId: 64, payload);
+
+        Assert.NotNull(evt);
+        Assert.Equal(EtwEventKind.FileCreate, evt.Value.EventKind);
+        Assert.Equal((uint)4321, evt.Value.ProcessId);
+        Assert.Equal(@"C:\Users\Tester\AppData\Local\Temp\dropped.exe", evt.Value.Target);
+        Assert.Equal("File Create", evt.Value.Operation);
+    }
+
+    /// <summary>OpenPath 为空字符串时返回 null —— 不产出无路径的文件事件。</summary>
+    [Fact]
+    public void ParseFileCreate_EmptyPath_ReturnsNull()
+    {
+        var payload = BuildFileCreatePayload("");
+        Assert.Null(EtwKernelSession.ParseFileEvent(1, 2, 0, 64, payload));
+    }
+
+    [Fact]
+    public void ParseFileCreate_TooShortPayload_ReturnsNull()
+    {
+        Assert.Null(EtwKernelSession.ParseFileEvent(1, 2, 0, 64, new byte[] { 1, 2, 3, 4 }));
+    }
+
+    /// <summary>FileIo_Write（EventId 67）目前未实现（需 FileObject 关联），应返回 null 而非误判。</summary>
+    [Fact]
+    public void ParseFileEvent_UnsupportedEventId_ReturnsNull()
+    {
+        var payload = BuildFileCreatePayload(@"C:\x.exe");
+        Assert.Null(EtwKernelSession.ParseFileEvent(1, 2, 0, eventId: 67, payload));
+    }
 }

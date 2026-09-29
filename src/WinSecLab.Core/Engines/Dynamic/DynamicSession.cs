@@ -577,6 +577,7 @@ public sealed class DynamicSession : IDisposable
         {
             EtwEventKind.ProcessStart => MonitorEventType.ProcessStart,
             EtwEventKind.ProcessStop => MonitorEventType.ProcessStop,
+            EtwEventKind.FileCreate => MonitorEventType.FileCreate,
             _ => MonitorEventType.Note,
         };
         if (type == MonitorEventType.Note) return;

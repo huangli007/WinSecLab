@@ -20,7 +20,8 @@ internal static class EtwNative
     internal const uint EVENT_TRACE_SYSTEM_LOGGER_MODE = 0x02000000;   // 系统内核会话
     internal const uint EVENT_TRACE_FLAG_PROCESS = 0x00000001;         // 进程创建/终止
     internal const uint EVENT_TRACE_FLAG_THREAD = 0x00000002;
-    internal const uint EVENT_TRACE_FLAG_FILE_IO = 0x02000000;         // 文件 I/O
+    internal const uint EVENT_TRACE_FLAG_FILE_IO = 0x02000000;         // FileIo_OpEnd（操作结束）
+    internal const uint EVENT_TRACE_FLAG_FILE_IO_INIT = 0x04000000;    // FileIo_Create 等（创建/枚举/读写）
     internal const uint EVENT_TRACE_FLAG_REGISTRY = 0x00020000;        // 注册表
 
     internal const uint PROCESS_TRACE_MODE_REAL_TIME = 0x00000100;
