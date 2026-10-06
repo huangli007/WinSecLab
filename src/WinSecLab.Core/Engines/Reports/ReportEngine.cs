@@ -154,6 +154,16 @@ public sealed class ReportEngine
             html.Append($"<li><a href=\"#{Slug(slug)}\"><span class=\"toc-num\">{number}</span>{E(title)}</a></li>\n");
         html.Append("</ul></nav>\n");
 
+        // 悬浮侧边目录 —— 正文往下滚、顶部目录离开视口后从右侧滑入。
+        // 章节列表与上面的目录同源，避免两处各写一份导致不同步。
+        html.Append("<nav id=\"side-toc\" class=\"side-toc\" aria-label=\"章节导航\">\n");
+        html.Append("<div class=\"side-toc-head\">章节</div>\n<ul>\n");
+        foreach (var (slug, title, number) in SectionList)
+            html.Append($"<li><a href=\"#{Slug(slug)}\" data-target=\"{Slug(slug)}\">"
+                        + $"<span class=\"n\">{number}</span>{E(title)}</a></li>\n");
+        html.Append("</ul>\n<button type=\"button\" class=\"side-toc-top\" "
+                    + "onclick=\"window.scrollTo({top:0,behavior:'smooth'})\">回到顶部</button>\n</nav>\n");
+
         // 1. 执行摘要
         Section("executive", "执行摘要", 1);
         html.Append("<div class=\"summary-grid\">\n");
@@ -928,9 +938,80 @@ public sealed class ReportEngine
             .Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"))
             .Append("</p>\n</footer>\n");
 
+        html.Append(SideTocScript);
+
         html.Append("</body>\n</html>\n");
         return html.ToString();
     }
+
+    /// <summary>
+    /// 悬浮侧边目录的驱动脚本（内联，报告保持零外部依赖、单文件可离线打开）。
+    ///
+    /// 两件事：
+    ///  1. **显隐**：顶部目录（nav.toc）滚出视口后给侧栏加 <c>.is-visible</c>。
+    ///     纯 CSS 无法得知"另一个元素还在不在视口里"，所以必须用 IntersectionObserver。
+    ///  2. **高亮**：监听各章节的位置，把当前正在阅读的那一章标出来。
+    ///
+    /// 优雅降级：IntersectionObserver 不可用时（极老浏览器）退化为「始终可见」，
+    /// 宁可常驻，也不能让导航彻底失效。
+    /// </summary>
+    private const string SideTocScript = """
+        <script>
+        (function () {
+          var side = document.getElementById('side-toc');
+          if (!side) return;
+          var anchor = document.querySelector('nav.toc');
+
+          // ① 顶部目录离开视口 → 侧栏滑入
+          if (anchor && 'IntersectionObserver' in window) {
+            new IntersectionObserver(function (entries) {
+              // 只在顶部目录完全不可见时出现；回到顶部立刻收起
+              side.classList.toggle('is-visible', !entries[0].isIntersecting);
+            }, { threshold: 0 }).observe(anchor);
+          } else {
+            side.classList.add('is-visible');   // 降级：常驻显示
+          }
+
+          // ② 高亮当前章节 —— 取最后一个已越过视口上沿的章节
+          var links = side.querySelectorAll('a[data-target]');
+          var targets = [];
+          links.forEach(function (a) {
+            var el = document.getElementById(a.getAttribute('data-target'));
+            if (el) targets.push({ el: el, a: a });
+          });
+          if (!targets.length || !('IntersectionObserver' in window)) return;
+
+          var visible = new Set();
+          var observer = new IntersectionObserver(function (entries) {
+            entries.forEach(function (e) {
+              if (e.isIntersecting) visible.add(e.target);
+              else visible.delete(e.target);
+            });
+            // 视口里最靠上的那个章节即当前章节；一个都没有则保持上次高亮
+            var current = null;
+            targets.forEach(function (t) { if (visible.has(t.el)) current = current || t; });
+            links.forEach(function (a) { a.classList.remove('is-current'); });
+            if (current) current.a.classList.add('is-current');
+          }, { rootMargin: '0px 0px -70% 0px', threshold: 0 });
+
+          targets.forEach(function (t) { observer.observe(t.el); });
+
+          // ③ 平滑滚动（尊重用户的"减少动画"偏好）
+          var reduce = window.matchMedia
+            && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+          links.forEach(function (a) {
+            a.addEventListener('click', function (ev) {
+              var el = document.getElementById(a.getAttribute('data-target'));
+              if (!el) return;
+              ev.preventDefault();
+              el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+              // file:// 下改 hash 可能抛 SecurityError，不影响跳转，忽略即可
+              try { history.replaceState(null, '', '#' + a.getAttribute('data-target')); } catch (e) {}
+            });
+          });
+        })();
+        </script>
+        """;
 
     /// <summary>
     /// 章节目录。标题用纯中文（原来中英双写 `Executive Summary 执行摘要` 冗长且不美观），
@@ -1778,6 +1859,40 @@ public sealed class ReportEngine
         nav.toc a { color: #2e5b9f; text-decoration: none; }
         nav.toc a .toc-num { display: inline-block; min-width: 20px; color: #8a95a8; font-variant-numeric: tabular-nums; }
         nav.toc a:hover { text-decoration: underline; }
+
+        /* 悬浮侧边目录：顶部目录滚出视口后从右侧滑入，点击跳转章节。
+           纯 CSS 无法感知「另一个元素是否还在视口内」，所以可见性由内联 JS
+           的 IntersectionObserver 切换 .is-visible 类控制。 */
+        .side-toc { position: fixed; top: 50%; right: 18px; transform: translate(24px, -50%);
+                    z-index: 40; width: 176px; max-height: 74vh; overflow-y: auto;
+                    background: rgba(255,255,255,.96); border: 1px solid #e3e8f0; border-radius: 10px;
+                    box-shadow: 0 6px 22px rgba(31,58,99,.13); padding: 10px 8px;
+                    opacity: 0; visibility: hidden; pointer-events: none;
+                    transition: opacity .22s ease, transform .22s ease, visibility .22s ease; }
+        .side-toc.is-visible { opacity: 1; visibility: visible; pointer-events: auto;
+                               transform: translate(0, -50%); }
+        .side-toc .side-toc-head { font-size: 11.5px; font-weight: 600; color: #8a95a8;
+                                   letter-spacing: 1.5px; padding: 0 8px 6px; }
+        .side-toc ul { margin: 0; padding: 0; list-style: none; }
+        .side-toc li { margin: 0; }
+        .side-toc a { display: block; padding: 5px 8px; border-radius: 6px; font-size: 12.5px;
+                      color: #47536b; text-decoration: none; line-height: 1.35;
+                      border-left: 2px solid transparent; transition: background .15s ease, color .15s ease; }
+        .side-toc a .n { display: inline-block; min-width: 16px; color: #a3adbf;
+                         font-variant-numeric: tabular-nums; }
+        .side-toc a:hover { background: #f2f6fd; color: #2e5b9f; }
+        .side-toc a.is-current { background: #eef3fc; color: #2e5b9f; font-weight: 600;
+                                 border-left-color: #2e5b9f; }
+        .side-toc a.is-current .n { color: #2e5b9f; }
+        .side-toc-top { display: block; width: 100%; margin-top: 8px; padding: 5px 8px;
+                        border: 1px solid #e3e8f0; border-radius: 6px; background: #fff;
+                        color: #6b7891; font-size: 12px; font-family: inherit; cursor: pointer; }
+        .side-toc-top:hover { background: #f2f6fd; color: #2e5b9f; border-color: #c9d8ee; }
+        .side-toc::-webkit-scrollbar { width: 6px; }
+        .side-toc::-webkit-scrollbar-thumb { background: #ccd5e4; border-radius: 3px; }
+        /* 窄屏隐藏：正文容器宽 1200px，加上侧栏 176px + 两侧留白，
+           视口不足 1500px 时侧栏会压住正文，此时只保留顶部目录。 */
+        @media (max-width: 1499px) { .side-toc { display: none; } }
         h2.section, section { max-width: 1200px; }
         h2.section { margin: 32px auto 12px; padding: 10px 18px; background: #fff; border-left: 5px solid #2e5b9f;
                      border-radius: 6px; font-size: 19px; color: #1f3a63; }
@@ -1856,6 +1971,8 @@ public sealed class ReportEngine
           body { background: #fff; }
           h2.section, .sec-body, nav.toc, .finding { break-inside: avoid; }
           nav.toc { break-after: page; }
+          /* 悬浮导航属于屏幕交互件，打印时一律隐藏（否则会印在每一页上） */
+          .side-toc { display: none !important; }
           /* 打印时展开全部折叠内容，确保 PDF 不丢取证明细 */
           .fold > label.fold-head { display: none; }
           .fold > .fold-body { display: block; border-top: none; padding: 0; }
