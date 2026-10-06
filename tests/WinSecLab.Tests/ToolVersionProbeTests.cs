@@ -11,6 +11,7 @@ namespace WinSecLab.Tests;
 /// - 同一套 Sysinternals 工具编码并不统一（sigcheck UTF-16LE / strings UTF-8），硬编码任一种都会乱码
 /// - 纯 GUI 工具（procexp）的 /? 会弹窗口而非打印，只能读 PE 版本资源
 /// </summary>
+[Collection(ExternalProcess.Name)]
 public class ToolVersionProbeTests
 {
     // ---------- PickVersionLine：从输出里挑版本行 ----------

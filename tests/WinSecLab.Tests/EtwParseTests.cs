@@ -10,6 +10,7 @@ namespace WinSecLab.Tests;
 /// 而这里的错误不会报异常——只会悄悄产出错误的 PID 或空进程名，污染整个进程树归因。
 /// 所以把真实 payload 布局钉进测试。
 /// </summary>
+[Collection(ExternalProcess.Name)]
 public class EtwParseTests
 {
     /// <summary>构造 ProcessStart（EventId 1）的 payload：固定头 + 变长区（含 .exe 映像名）。</summary>

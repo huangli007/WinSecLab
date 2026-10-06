@@ -8,6 +8,7 @@ namespace WinSecLab.Tests;
 /// YARA 引擎与规则解析。规则引擎是安全工具的"结论来源"，
 /// 这里的每个用例都在防一类真实事故：误报、漏报、以及把用户的规则解析错。
 /// </summary>
+[Collection(ExternalProcess.Name)]
 public class YaraTests
 {
     private static byte[] Bytes(string text) => Encoding.ASCII.GetBytes(text);

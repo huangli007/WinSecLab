@@ -8,6 +8,7 @@ using WinSecLab.Core.Storage;
 namespace WinSecLab.Tests;
 
 /// <summary>编排与存储层的关键行为。这些决定"分析能不能跑完、结论能不能读回来"。</summary>
+[Collection(ExternalProcess.Name)]
 public class PipelineTests
 {
     // ─────────────────────── 规则集质量门禁 ───────────────────────

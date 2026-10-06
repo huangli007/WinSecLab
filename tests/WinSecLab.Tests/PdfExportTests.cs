@@ -11,7 +11,11 @@ namespace WinSecLab.Tests;
 ///
 /// 之前踩的坑：给 Edge 重定向 stdout/stderr 却不读 → 管道满 → 卡死。
 /// 现在实现里干脆不重定向，并用"轮询文件出现"替代"等进程退出"。
+///
+/// 另一个坑：多个测试类并行各自启 Edge 会互相争抢，导致卡到超时
+/// （曾实测全量卡死 18 分钟，正常仅 2 分钟）。故归入 <see cref="ExternalProcess"/> 串行集合。
 /// </summary>
+[Collection(ExternalProcess.Name)]
 public class PdfExportTests : IDisposable
 {
     private readonly string _dir;

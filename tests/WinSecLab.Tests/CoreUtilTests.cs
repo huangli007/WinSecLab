@@ -5,6 +5,7 @@ using WinSecLab.Core.Util;
 namespace WinSecLab.Tests;
 
 /// <summary>工具层的基础不变量。这些函数是所有上层判断的地基，错了会带偏一整串结论。</summary>
+[Collection(ExternalProcess.Name)]
 public class CoreUtilTests
 {
     // ─────────────────────────────── 熵 ───────────────────────────────

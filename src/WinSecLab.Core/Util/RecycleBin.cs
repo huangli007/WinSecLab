@@ -107,7 +107,19 @@ internal static class RecycleBin
 
         worker.SetApartmentState(ApartmentState.STA);
         worker.Start();
-        worker.Join();
+
+        // SHFileOperation 在受限环境（沙箱 / 安全软件拦截）下可能**永久阻塞**在 shell 内部，
+        // 此时 STA 线程永不返回，无超时的 Join() 会把整个进程（测试宿主 / UI）一起拖死。
+        // 所以必须带超时：超时后放弃等待（线程是 IsBackground，不会阻止进程退出），
+        // 并以"文件系统实际状态"判定成败——这是唯一可信的依据。
+        if (!worker.Join(TimeSpan.FromSeconds(30)))
+        {
+            var gone = !Directory.Exists(path) && !File.Exists(path);
+            error = gone
+                ? null
+                : $"回收站操作超时（30 秒无响应，路径：{path}）。可能是安全软件拦截了 shell 删除操作。";
+            return gone;
+        }
 
         error = threadError;
         return success;
