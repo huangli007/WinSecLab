@@ -36,6 +36,10 @@ dotnet run --project src/WinSecLab.App -c Release
 
 ```
 wsx analyze <目标文件> [--profile FullSecurityAssessment] [--run-seconds 30] [--json]
+wsx findings <项目编号>                 # 列出发现项与人工复核状态
+wsx findings <项目编号> --finding WS-101 --status 已确认 --note "已与开发确认"
+wsx compare <项目编号> [--base <快照编号>] [--json]   # 与上一轮快照对比（回归视角）
+wsx report <项目编号> [--csv] [--pdf]   # 重新生成报告 / 导出 CSV / 打印 PDF
 wsx projects
 wsx plugins
 wsx doctor
@@ -52,14 +56,15 @@ wsx help
 dotnet test tests/WinSecLab.Tests/WinSecLab.Tests.csproj -c Release
 ```
 
-**62 个用例全部通过**，覆盖四类回归点：
+**157 个用例全部通过**，覆盖五类回归点：
 
 | 类别 | 防的是什么 |
 |---|---|
 | 工具层（熵 / 哈希 / 路径语义） | 基础判断被改坏——比如 `D:/Program Files` 曾被误判为用户可写 |
 | YARA 引擎与规则解析 | 匹配语义（nocase / wide / N-of-them）、用户规则的 unsupported 语法静默丢弃 |
-| 外部工具输出解析 | 第三方格式变化——Sigcheck / Procmon CSV、tshark 网卡列表、yara 输出 |
-| 编排与存储 | 插件任务全覆盖、外部工具缺失回退、SQLite 建表与往返 |
+| 外部工具输出解析与版本探测 | 第三方格式变化——Sigcheck / Procmon CSV、tshark 网卡列表、yara 输出；输出编码不一致（UTF-16LE vs UTF-8） |
+| 编排与存储 | 插件任务全覆盖、外部工具缺失回退、SQLite 建表与往返、**发现项复核状态持久化**、**快照持久化与基线对比** |
+| 报告与导出 | PDF 打印内容完整性、CSV 列数稳定（下游脚本按列位置取值） |
 
 测试用的是真实格式样例（含踩过坑的输入），新增规则或适配器时请照着补。
 
@@ -72,6 +77,8 @@ dotnet test tests/WinSecLab.Tests/WinSecLab.Tests.csproj -c Release
    → 勾选任务 / 选 Profile → 静态检查
    → 动态运行（启动目标，监控进程/文件/注册表/网络）
    → 规则引擎跨证据关联 → Findings + Security Graph
+   → 人工复核（确认 / 误报 / 接受风险 / 已整改 + 复核意见）
+   → 落快照并与上一轮对比（新增 / 消失 / 变化 / 持续）
    → 生成 HTML / Markdown / JSON 报告
 ```
 
@@ -137,11 +144,29 @@ dotnet test tests/WinSecLab.Tests/WinSecLab.Tests.csproj -c Release
 
 每次分析生成三份格式，位于 `项目目录\Reports\`：
 
-- **HTML** — 自包含单文件（样式内联），双击浏览器打开；浏览器「打印 → 另存为 PDF」即可得 PDF
+- **HTML** — 自包含单文件（样式内联），双击浏览器打开；「打印 → 另存为 PDF」即可得 PDF（页面内置「导出 PDF」按钮更省事）
 - **Markdown** — 适合贴进 Wiki / 禅道 / 仓库
 - **JSON** — 结构化结果（findings / evidence / events），可接入 CI 做二次统计
 
-报告章节：执行摘要 · 应用信息 · 测试环境 · 静态分析 · 动态行为 · 网络分析 · 文件系统 · 注册表 · 依赖关系 · 安全发现 · 证据附录 · 安全图谱 · 方法说明。
+**报告章节共 10 章**：执行摘要 · 程序信息 · 测试环境 · 静态分析 · 运行期观测 · 依赖分析 · 安全发现 · 证据链 · 风险整改 · 附录。
+
+**结构遵循「主体精简 + 附录保留全量」**：正文只放结论与关键数据，全量明细（导入模块、依赖清单、字符串样本）折叠在附录区可展开；折叠用可打印的 checkbox 实现，导出 PDF 时明细**不会丢**。
+
+**发现项带人工复核状态**：每条发现可标注 `待处理 / 已确认 / 误报 / 接受风险 / 已整改` 并附复核意见，摘要会给出「M/N 条已复核」进度。复核入口有三处：
+
+| 入口 | 操作 |
+|---|---|
+| GUI | 「安全发现」页 → 选中条目 → 右侧「人工复核」卡片 → 选状态 + 填意见 + 保存 |
+| CLI | `wsx findings <编号> --finding WS-101 --status 已确认 --note "说明"` |
+| 报告 | 只读呈现（状态列 + 复核意见小节） |
+
+**每轮分析落一份快照，可与上一轮对比**：发现项是按 ID 覆盖写入的，直接读库看不出"这次多了什么、上次那条怎么没了"。所以每轮结束存一份 `AnalysisSnapshot`，下一轮 diff 出 **新增 / 消失 / 变化 / 持续**，报告摘要后多出「与上次对比」一节（含事件数、连接数量级变化与版本变更提醒）。
+
+| 入口 | 操作 |
+|---|---|
+| GUI | 「轮次对比」页 → 选基线快照与当前快照 → 自动展示新增 / 消失 / 变化 / 持续四类差异（含规模变化与版本变更提醒） |
+| CLI | `wsx compare <编号>`（默认最新 vs 上一轮）、`--base <快照编号>` 指定基线、`--json` 机器可读 |
+| 报告 | 摘要后「与上次对比」自动节（有新基线快照时才出现） |
 
 **每个发现都能回溯到原始证据**：规则只做"基于已采集证据的归纳"，不做猜测——这是 §25「证据优先 / 人工可验证」的落地。
 
@@ -195,7 +220,7 @@ WinSecLab/
 │   │   ├── Plugins/           # 插件契约 + 内置插件 + 外部工具适配器
 │   │   ├── Storage/           # SQLite 封装 + 工作区服务
 │   │   └── Util/              # 哈希 / 熵 / 原生调用 / 安全定时器 / 进程快照
-│   ├── WinSecLab.App/         # WPF 界面（10 个页面）
+│   ├── WinSecLab.App/         # WPF 界面（11 个页面）
 │   └── WinSecLab.Cli/         # wsx 命令行
 └── tests/WinSecLab.Tests/
 ```
@@ -224,7 +249,9 @@ WinSecLab/
 | 跑一次完整评估 | 「测试执行」页选 Full Security Assessment → 开始分析 |
 | 只做静态体检 | 勾选 Profile 为 Basic，或勾掉所有动态任务 |
 | 查看某个结论的依据 | 「安全发现」→ 选中条目 → 关联证据卡片 |
+| 复核一条发现（确认/误报/接受风险） | 「安全发现」页 → 选中条目 → 右侧「人工复核」卡片 → 选状态 + 填意见 → 保存；命令行 `wsx findings <编号> --finding WS-101 --status 已确认 --note "说明"` |
 | 看程序到底访问了哪些域名 | 「动态行为」→ 网络连接 / DNS 观测（装了 tshark 还能看 TLS SNI） |
+| 改版后看这次比上次多了什么 | 「轮次对比」页选好两轮快照（默认最新 vs 上一轮），四类差异一屏看完；命令行 `wsx compare <编号>`；报告摘要后也有「与上次对比」节 |
 | 复用上次结果不重跑 | 「项目」页选中项目，其它页面会自动载入历史结果 |
 | 重新生成报告 | 「报告」页 → 基于当前结果重新生成 |
 | 导出发现清单做跟踪表 | 「安全发现」页 → 导出清单 CSV（UTF-8 BOM，Excel 直接打开不乱码）；命令行 `wsx report <编号> --csv`（同时导出发现+证据两张表） |
@@ -241,7 +268,7 @@ WinSecLab/
 WinSecLab.exe --snapshot <输出目录> --snapshot-width 1480 --snapshot-height 900
 ```
 
-会把 10 个页面渲染成 PNG 后自动退出（窗口移到屏幕外渲染，不依赖截屏权限），用于界面回归检查。
+会把 11 个页面渲染成 PNG 后自动退出（窗口移到屏幕外渲染，不依赖截屏权限），用于界面回归检查。
 
 ---
 
@@ -265,19 +292,29 @@ dotnet test tests/WinSecLab.Tests/WinSecLab.Tests.csproj -c Release
 **发布自包含单文件**（免 .NET 运行时，双击即跑，产物在 `dist/win-x64/`）：
 
 ```bash
+bash publish.sh          # 一步到位：串行发布 App + CLI，并自动跑 wsx doctor 冒烟
+```
+
+脚本做三件手工容易漏的事：先 `dotnet build-server shutdown` 关掉常驻进程、清空输出目录
+（避免拿到上一次的旧产物）、**串行**发布 —— App 与 CLI 都引用 Core，
+并行发布会同时写 `WinSecLab.Core.dll`，报 `CS2012 文件被占用`。
+
+需要手动执行时对应的命令是：
+
+```bash
 # 桌面 GUI（WinSecLab.exe）
 dotnet publish src/WinSecLab.App -c Release -r win-x64 --self-contained true \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
   -p:EnableCompressionInSingleFile=true -o dist/win-x64
 
-# 命令行（wsx.exe）
+# 命令行（wsx.exe）—— 必须在 App 发布完成后再跑
 dotnet publish src/WinSecLab.Cli -c Release -r win-x64 --self-contained true \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
   -p:EnableCompressionInSingleFile=true -o dist/win-x64
 ```
 
-> ⚠️ App 与 CLI 都引用 Core，**必须串行发布**——并行发布会同时写 `WinSecLab.Core.dll`，
-> 报 `CS2012 文件被占用`。若已冲突，先 `dotnet build-server shutdown` 再重试。
+> 若手动执行时冲突（`CS2012 文件被占用`），先 `dotnet build-server shutdown` 再重试。
+> 用 `publish.sh` 则不会遇到。
 
 ---
 

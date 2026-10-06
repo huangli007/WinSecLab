@@ -1,0 +1,291 @@
+﻿<UserControl x:Class="WinSecLab.App.Views.ComparisonView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:infra="clr-namespace:WinSecLab.App.Infrastructure"
+             Background="{StaticResource B.Bg}">
+    <UserControl.Resources>
+        <infra:BoolToVisibilityConverter x:Key="BoolVis" />
+        <infra:SeverityBrushConverter x:Key="SevBrush" />
+        <infra:SeverityTextConverter x:Key="SevText" />
+    </UserControl.Resources>
+
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 顶部：快照选择 -->
+        <Border Grid.Row="0" Style="{StaticResource Card}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Margin="0,0,14,0" VerticalAlignment="Center">
+                    <TextBlock Text="轮次对比" Style="{StaticResource T.H2}" />
+                    <TextBlock Text="回归测试视角：这一轮比上一轮多了什么、少了什么" Style="{StaticResource T.Caption}" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Margin="0,0,14,0">
+                    <TextBlock Text="基线（上一轮）" Style="{StaticResource T.Label}" />
+                    <ComboBox x:Name="BaselineBox" SelectionChanged="Selector_OnChanged" />
+                </StackPanel>
+
+                <TextBlock Grid.Column="2" Text="→" Style="{StaticResource T.H2}"
+                           VerticalAlignment="Bottom" Margin="4,0,14,6" />
+
+                <StackPanel Grid.Column="3" Margin="0,0,14,0">
+                    <TextBlock Text="当前（本轮）" Style="{StaticResource T.Label}" />
+                    <ComboBox x:Name="CurrentBox" SelectionChanged="Selector_OnChanged" />
+                </StackPanel>
+
+                <Button Grid.Column="4" Content="↻ 刷新" Style="{StaticResource Btn.Secondary}"
+                        VerticalAlignment="Bottom" Click="Refresh_OnClick" />
+            </Grid>
+        </Border>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,14,0,0">
+            <StackPanel>
+
+                <!-- 空状态：快照不足 -->
+                <Border Style="{StaticResource Card}" Padding="40"
+                        Visibility="{Binding CanCompare, Converter={StaticResource BoolVis}, ConverterParameter=invert}">
+                    <StackPanel HorizontalAlignment="Center">
+                        <TextBlock Text="还没有可对比的轮次" Style="{StaticResource T.H2}" HorizontalAlignment="Center" />
+                        <TextBlock x:Name="EmptyHintText" Style="{StaticResource T.Dim}" Margin="0,6,0,0"
+                                   HorizontalAlignment="Center" TextAlignment="Center"
+                                   Text="每跑完一次分析会落一份快照。跑第二轮之后，这里就能看出两次的差异。" />
+                    </StackPanel>
+                </Border>
+
+                <StackPanel Visibility="{Binding CanCompare, Converter={StaticResource BoolVis}}">
+
+                    <!-- 结论卡 -->
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock x:Name="VerdictText" Style="{StaticResource T.H1}" />
+                            <TextBlock x:Name="BaselineText" Style="{StaticResource T.Dim}" Margin="0,5,0,0" />
+                            <Border x:Name="TargetChangedBanner" Style="{StaticResource SubCard}" Padding="12,9"
+                                    Margin="0,10,0,0" Visibility="Collapsed"
+                                    Background="{StaticResource B.MediumSoft}">
+                                <TextBlock x:Name="TargetChangedText" TextWrapping="Wrap"
+                                           Foreground="{StaticResource B.Medium}" />
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 计数变化 -->
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="规模变化" Style="{StaticResource T.H2}" />
+                            <Border Style="{StaticResource Divider}" />
+                            <ItemsControl x:Name="MetricList">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <UniformGrid Columns="5" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="0,0,10,0">
+                                            <TextBlock Text="{Binding Value}" FontSize="22" FontWeight="SemiBold"
+                                                       Foreground="{Binding Brush}" />
+                                            <TextBlock Text="{Binding Label}" Style="{StaticResource T.Caption}" />
+                                            <TextBlock Text="{Binding Delta}" Style="{StaticResource T.Dim}"
+                                                       FontSize="11" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 新增：最需要先看的一格 -->
+                    <Border Style="{StaticResource Card}"
+                            Visibility="{Binding HasAdded, Converter={StaticResource BoolVis}}">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="新增发现" Style="{StaticResource T.H2}" />
+                                <Border Style="{StaticResource Badge}" Background="{StaticResource B.HighSoft}"
+                                        Margin="8,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock x:Name="AddedCountText" FontSize="10.5" FontWeight="SemiBold"
+                                               Foreground="{StaticResource B.High}" />
+                                </Border>
+                            </StackPanel>
+                            <TextBlock Text="本轮新命中、上一轮没有的问题 —— 多半是改版引入或新触发的路径，优先复核。"
+                                       Style="{StaticResource T.Caption}" Margin="0,3,0,0" />
+                            <Border Style="{StaticResource Divider}" />
+                            <ItemsControl x:Name="AddedList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Style="{StaticResource SubCard}" Padding="12,9" Margin="0,0,0,6">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Grid.Column="0" Style="{StaticResource Badge}" VerticalAlignment="Top"
+                                                        Background="{Binding Severity, Converter={StaticResource SevBrush},
+                                                                             ConverterParameter=bg}">
+                                                    <TextBlock Text="{Binding Severity, Converter={StaticResource SevText}}"
+                                                               FontSize="10.5" FontWeight="SemiBold"
+                                                               Foreground="{Binding Severity, Converter={StaticResource SevBrush}}" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Margin="10,0,10,0">
+                                                    <TextBlock Text="{Binding Title}" Style="{StaticResource T.Body}"
+                                                               FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding Category}" Style="{StaticResource T.Caption}" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding Id}" Style="{StaticResource T.Mono}"
+                                                           VerticalAlignment="Top" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 消失（可能是修复） -->
+                    <Border Style="{StaticResource Card}"
+                            Visibility="{Binding HasRemoved, Converter={StaticResource BoolVis}}">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="消失发现" Style="{StaticResource T.H2}" />
+                                <Border Style="{StaticResource Badge}" Background="{StaticResource B.LowSoft}"
+                                        Margin="8,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock x:Name="RemovedCountText" FontSize="10.5" FontWeight="SemiBold"
+                                               Foreground="{StaticResource B.Low}" />
+                                </Border>
+                            </StackPanel>
+                            <TextBlock Text="上一轮有、本轮未再命中 —— 通常是已修复；也可能是本轮未触发到那条路径，需要甄别。"
+                                       Style="{StaticResource T.Caption}" Margin="0,3,0,0" />
+                            <Border Style="{StaticResource Divider}" />
+                            <ItemsControl x:Name="RemovedList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Style="{StaticResource SubCard}" Padding="12,9" Margin="0,0,0,6">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Grid.Column="0" Style="{StaticResource Badge}" VerticalAlignment="Top"
+                                                        Background="{Binding Severity, Converter={StaticResource SevBrush},
+                                                                             ConverterParameter=bg}">
+                                                    <TextBlock Text="{Binding Severity, Converter={StaticResource SevText}}"
+                                                               FontSize="10.5" FontWeight="SemiBold"
+                                                               Foreground="{Binding Severity, Converter={StaticResource SevBrush}}" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Margin="10,0,10,0">
+                                                    <TextBlock Text="{Binding Title}" Style="{StaticResource T.Body}"
+                                                               FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding Category}" Style="{StaticResource T.Caption}" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding Id}" Style="{StaticResource T.Mono}"
+                                                           VerticalAlignment="Top" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 变化明细 -->
+                    <Border Style="{StaticResource Card}"
+                            Visibility="{Binding HasChanged, Converter={StaticResource BoolVis}}">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="变化明细" Style="{StaticResource T.H2}" />
+                                <Border Style="{StaticResource Badge}" Background="{StaticResource B.AccentSoft}"
+                                        Margin="8,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock x:Name="ChangedCountText" FontSize="10.5" FontWeight="SemiBold"
+                                               Foreground="{StaticResource B.Accent}" />
+                                </Border>
+                            </StackPanel>
+                            <TextBlock Text="两轮都在、但严重级或处理状态变了。状态变化说明有人在推进复核。"
+                                       Style="{StaticResource T.Caption}" Margin="0,3,0,0" />
+                            <Border Style="{StaticResource Divider}" />
+                            <DataGrid x:Name="ChangedGrid" Style="{StaticResource Grid}" BorderThickness="0"
+                                      MaxHeight="260" IsReadOnly="True" HeadersVisibility="Column">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="编号" Binding="{Binding Id}" Width="96" />
+                                    <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="*" />
+                                    <DataGridTextColumn Header="字段" Binding="{Binding Field}" Width="90" />
+                                    <DataGridTextColumn Header="变化前" Binding="{Binding Before}" Width="100" />
+                                    <DataGridTextColumn Header="变化后" Binding="{Binding After}" Width="100" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 持续存在 -->
+                    <Border Style="{StaticResource Card}"
+                            Visibility="{Binding HasUnchanged, Converter={StaticResource BoolVis}}">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="持续存在（未处理）" Style="{StaticResource T.H2}" />
+                                <Border Style="{StaticResource Badge}" Background="{StaticResource B.MediumSoft}"
+                                        Margin="8,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock x:Name="UnchangedCountText" FontSize="10.5" FontWeight="SemiBold"
+                                               Foreground="{StaticResource B.Medium}" />
+                                </Border>
+                            </StackPanel>
+                            <TextBlock Text="两轮一致且仍是「待处理」的问题 —— 属于欠账，别让它们一直挂着。"
+                                       Style="{StaticResource T.Caption}" Margin="0,3,0,0" />
+                            <Border Style="{StaticResource Divider}" />
+                            <ItemsControl x:Name="UnchangedList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Style="{StaticResource SubCard}" Padding="12,9" Margin="0,0,0,6">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Grid.Column="0" Style="{StaticResource Badge}" VerticalAlignment="Top"
+                                                        Background="{Binding Severity, Converter={StaticResource SevBrush},
+                                                                             ConverterParameter=bg}">
+                                                    <TextBlock Text="{Binding Severity, Converter={StaticResource SevText}}"
+                                                               FontSize="10.5" FontWeight="SemiBold"
+                                                               Foreground="{Binding Severity, Converter={StaticResource SevBrush}}" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Margin="10,0,10,0">
+                                                    <TextBlock Text="{Binding Title}" Style="{StaticResource T.Body}"
+                                                               FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding Category}" Style="{StaticResource T.Caption}" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding Id}" Style="{StaticResource T.Mono}"
+                                                           VerticalAlignment="Top" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 完全无差异 -->
+                    <Border Style="{StaticResource Card}" Padding="28"
+                            Visibility="{Binding HasNoDiff, Converter={StaticResource BoolVis}}">
+                        <StackPanel HorizontalAlignment="Center">
+                            <TextBlock Text="两轮之间没有差异" Style="{StaticResource T.H2}" HorizontalAlignment="Center" />
+                            <TextBlock Style="{StaticResource T.Dim}" Margin="0,6,0,0" HorizontalAlignment="Center"
+                                       Text="发现项、事件数、连接数都没变。若这次确实改了程序，请确认样本哈希是否有变。" />
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

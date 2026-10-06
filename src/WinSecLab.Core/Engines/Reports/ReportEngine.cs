@@ -23,6 +23,12 @@ public sealed class ReportOptions
     public int MaxEventRowsInReport { get; set; } = 400;
     public int MaxEvidenceRows { get; set; } = 120;
     public List<ReportFormat> Formats { get; set; } = new() { ReportFormat.Html, ReportFormat.Markdown, ReportFormat.Json };
+
+    /// <summary>
+    /// 与上一轮的对比结果（可选）。有值且存在基线时，报告会多出一节「与上次对比」，
+    /// 把新增/消失/变化摆出来 —— 这是回归测试最想先看到的东西。
+    /// </summary>
+    public ComparisonResult? Comparison { get; set; }
 }
 
 public sealed class ReportResult
@@ -100,12 +106,12 @@ public sealed class ReportEngine
         string? openSectionTitle = null;
 
         // 章内内容按顺序追加，靠这个状态在下一章开始前收尾
-        void Section(int number, string title)
+        void Section(string slug, string title, int number)
         {
             if (openSectionTitle is not null) html.Append("</div>\n");
             sectionNumber = number;
             openSectionTitle = title;
-            html.Append($"<h2 class=\"section\" id=\"{Slug(title)}\">{number}. {E(title)}</h2>\n<div class=\"sec-body\">\n");
+            html.Append($"<h2 class=\"section\" id=\"{Slug(slug)}\">{number}. {E(title)}</h2>\n<div class=\"sec-body\">\n");
         }
 
         void EndSections()
@@ -143,12 +149,13 @@ public sealed class ReportEngine
         html.Append("</table>\n</header>\n");
 
         // ---------------------------------------------------------- 目录
-        html.Append("<nav class=\"toc\"><h2>目录</h2><ol>\n");
-        foreach (var (title, _) in SectionList) html.Append($"<li><a href=\"#{Slug(title)}\">{E(title)}</a></li>\n");
-        html.Append("</ol></nav>\n");
+        html.Append("<nav class=\"toc\"><h2>目录</h2><ul class=\"toc-list\">\n");
+        foreach (var (slug, title, number) in SectionList)
+            html.Append($"<li><a href=\"#{Slug(slug)}\"><span class=\"toc-num\">{number}</span>{E(title)}</a></li>\n");
+        html.Append("</ul></nav>\n");
 
         // 1. 执行摘要
-        Section(1, "Executive Summary 执行摘要");
+        Section("executive", "执行摘要", 1);
         html.Append("<div class=\"summary-grid\">\n");
         StatCard(stats.Critical, "严重", "sev-critical");
         StatCard(stats.High, "高危", "sev-high");
@@ -163,24 +170,133 @@ public sealed class ReportEngine
         html.Append($"<p>{E(stats.VerdictDetail)}</p>");
         html.Append("</div>\n");
 
+        // 需立即关注：只列中危及以上（低危/信息归到下面完整清单），按严重级排序。
+        // 领导/客户视角最需要的就这一小块 —— 先说要做什么，再给完整列表。
+        var actionables = result.Findings
+            .Where(f => f.Severity >= Severity.Medium)
+            .OrderByDescending(f => f.Severity)
+            .ThenBy(f => f.Id, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (actionables.Count > 0)
+        {
+            html.Append("<h3>需立即关注</h3>\n");
+            html.Append("<table class=\"data\"><thead><tr>");
+            html.Append("<th style=\"width:80px\">编号</th><th style=\"width:70px\">等级</th><th>问题</th>");
+            html.Append("<th style=\"width:270px\">建议动作</th></tr></thead><tbody>\n");
+            foreach (var f in actionables)
+            {
+                html.Append($"<tr><td><a href=\"#finding-{E(f.Id)}\">{E(f.Id)}</a></td>");
+                html.Append($"<td>{SeverityBadge(f.Severity)}</td>");
+                html.Append($"<td>{E(f.Title)}</td>");
+                html.Append($"<td>{E(FirstSentence(f.Recommendation))}</td></tr>\n");
+            }
+            html.Append("</tbody></table>\n");
+        }
+        else if (result.Findings.Count == 0)
+        {
+            html.Append("<p class=\"note\">本次未产生任何发现项。</p>\n");
+        }
+        else
+        {
+            html.Append("<p class=\"note\">本次未发现中危及以上问题，"
+                        + $"{result.Findings.Count} 个低危 / 信息项见「安全发现」章节。</p>\n");
+        }
+
+        // 全部发现の完整清单（含低危/信息）
         if (result.Findings.Count > 0)
         {
-            html.Append("<h3>关键发现</h3>\n<table class=\"data\"><thead><tr>");
+            var reviewed = result.Findings.Count(f => f.Status != FindingStatus.Open);
+            html.Append("<h3>发现项清单</h3>\n");
+            if (reviewed > 0)
+            {
+                html.Append($"<p class=\"note\">共 {result.Findings.Count} 条，其中 <strong>{reviewed} 条已经人工复核</strong>"
+                            + $"（已确认 / 误报 / 接受风险 / 已整改），{result.Findings.Count - reviewed} 条待处理。</p>\n");
+            }
+            html.Append("<table class=\"data\"><thead><tr>");
             html.Append("<th style=\"width:80px\">编号</th><th style=\"width:70px\">等级</th><th>标题</th>");
-            html.Append("<th style=\"width:70px\">置信度</th><th style=\"width:150px\">类别</th></tr></thead><tbody>\n");
-            foreach (var f in result.Findings.Where(f => f.Severity >= Severity.Low).Take(20))
+            html.Append("<th style=\"width:70px\">置信度</th><th style=\"width:150px\">类别</th><th style=\"width:96px\">处理状态</th></tr></thead><tbody>\n");
+            foreach (var f in result.Findings.OrderByDescending(f => f.Severity).ThenBy(f => f.Id))
             {
                 html.Append($"<tr><td><a href=\"#finding-{E(f.Id)}\">{E(f.Id)}</a></td>");
                 html.Append($"<td>{SeverityBadge(f.Severity)}</td>");
                 html.Append($"<td>{E(f.Title)}</td>");
                 html.Append($"<td>{E(f.ConfidenceText)}</td>");
-                html.Append($"<td>{E(f.Category)}</td></tr>\n");
+                html.Append($"<td>{E(f.Category)}</td>");
+                html.Append($"<td>{E(f.StatusText)}</td></tr>\n");
             }
             html.Append("</tbody></table>\n");
         }
 
+        // 采集覆盖一览：让读者一眼知道"这次测到什么程度"，避免把"没测"误读成"没问题"
+        html.Append("<h3>采集覆盖一览</h3>\n");
+        var dynOk = result.Events.Any(e => e.Type == MonitorEventType.SessionStart);
+        var elevated = result.Project?.Environment.IsElevated == true;
+        AppendTable(html, new[] { "维度", "覆盖情况" }, new[]
+        {
+            new[] { "静态分析", result.Pe is not null ? "已完成（PE 结构 / 字符串 / 依赖 / 签名）" : "未执行" },
+            new[] { "类型识别", result.Project?.Detection.DisplayName is { Length: > 0 } t ? $"已完成（{t}）" : "未执行" },
+            new[] { "动态分析", dynOk ? "已执行" : "未执行" },
+            new[] { "网络采集", result.Connections.Count > 0 ? "已采集" : "未采集" },
+            new[] { "权限级别", elevated ? "管理员（内核级归因可用）" : "标准用户（部分证据精度受限）" },
+            new[] { "证据条数", result.Evidence.Count.ToString() },
+            new[] { "人工复核", result.Findings.Count == 0
+                ? "无发现项需复核"
+                : $"{result.Findings.Count(f => f.Status != FindingStatus.Open)}/{result.Findings.Count} 条已复核" },
+        });
+
+        // 与上次对比（回归测试）—— 只有拿到基线快照时才出这一节
+        if (options.Comparison is { Baseline: not null, Current: not null } cmp)
+        {
+            html.Append("<h3>与上次对比</h3>\n");
+            html.Append($"<p>本轮与上一轮快照（{cmp.Baseline!.CapturedAt:yyyy-MM-dd HH:mm}）对比结果："
+                        + $"<strong>{E(cmp.Verdict)}</strong></p>\n");
+
+            if (cmp.TargetChanged)
+            {
+                html.Append("<p class=\"note\">⚠ 两轮样本哈希不一致（"
+                            + $"{Short(cmp.Baseline.TargetSha256)} → {Short(cmp.Current!.TargetSha256)}），"
+                            + "说明被测版本已变化，差异可能来自版本本身而非行为变化，请结合版本信息解读。</p>\n");
+            }
+
+            AppendTable(html, new[] { "类别", "数量", "说明" }, new[]
+            {
+                new[] { "发现项总数", $"{cmp.Current!.TotalFindings}", $"上轮 {cmp.Baseline.TotalFindings}，变化 {Signed(cmp.DeltaFindings)}" },
+                new[] { "新增", cmp.Added.Count.ToString(), cmp.Added.Count == 0 ? "无" : "本轮新命中，需重点复核" },
+                new[] { "消失", cmp.Removed.Count.ToString(), cmp.Removed.Count == 0 ? "无" : "上轮有、本轮未再命中（可能已修复）" },
+                new[] { "发生变化", cmp.Changed.Count.ToString(), cmp.Changed.Count == 0 ? "无" : "严重级或处理状态变化" },
+                new[] { "事件总数", cmp.Current.EventCount.ToString(), $"上轮 {cmp.Baseline.EventCount}，变化 {Signed(cmp.DeltaEvents)}" },
+                new[] { "网络连接", cmp.Current.ConnectionCount.ToString(), $"上轮 {cmp.Baseline.ConnectionCount}，变化 {Signed(cmp.DeltaConnections)}" },
+            });
+
+            if (cmp.Added.Count > 0)
+            {
+                html.Append("<h4>新增发现</h4>\n");
+                AppendTable(html, new[] { "编号", "等级", "标题", "类别" },
+                    cmp.Added.Select(f => new[] { f.Id, f.SeverityText, f.Title, f.Category }));
+            }
+
+            if (cmp.Removed.Count > 0)
+            {
+                html.Append("<h4>消失发现（上轮有、本轮未再命中）</h4>\n");
+                AppendTable(html, new[] { "编号", "等级", "标题", "类别" },
+                    cmp.Removed.Select(f => new[] { f.Id, f.SeverityText, f.Title, f.Category }));
+            }
+
+            if (cmp.Changed.Count > 0)
+            {
+                html.Append("<h4>变化明细</h4>\n");
+                AppendTable(html, new[] { "编号", "标题", "字段", "变化前", "变化后" },
+                    cmp.Changed.Select(c => new[] { c.Id, c.Title, c.Field, c.Before, c.After }));
+            }
+        }
+        else if (options.Comparison is { } noBaseline)
+        {
+            html.Append("<h3>与上次对比</h3>\n");
+            html.Append($"<p class=\"note\">{E(noBaseline.Verdict)}</p>\n");
+        }
+
         // 2. 程序信息
-        Section(2, "Application Information 程序信息");
+        Section("application", "程序信息", 2);
         AppendKeyValueTable(html, new (string, string?)[]
         {
             ("文件名", target.FileName),
@@ -207,7 +323,7 @@ public sealed class ReportEngine
         }
 
         // 3. 测试环境
-        Section(3, "Test Environment 测试环境");
+        Section("environment", "测试环境", 3);
         var env = result.Project?.Environment;
         AppendKeyValueTable(html, new (string, string?)[]
         {
@@ -249,7 +365,7 @@ public sealed class ReportEngine
         }
 
         // 4. 静态分析
-        Section(4, "Static Analysis 静态分析");
+        Section("static", "静态分析", 4);
         if (result.Pe is not null)
         {
             var pe = result.Pe;
@@ -290,15 +406,52 @@ public sealed class ReportEngine
 
             if (pe.Imports.Count > 0)
             {
-                html.Append("<h3>导入模块</h3>\n");
+                // 分两层：正文只列"有分析价值"的模块，全量清单折叠。
+                //
+                // 过滤规则来自实际报告的问题 —— 原来 Top 60 里混着 50+ 个 api-ms-win-* API Set
+                // 和 6 行函数数为 0 的空条目，真正的业务模块（USER32/GDI32 等）反被淹没。
+                static bool IsApiSetModule(string name) =>
+                    name.StartsWith("api-ms-win-", StringComparison.OrdinalIgnoreCase)
+                    || name.StartsWith("ext-ms-win-", StringComparison.OrdinalIgnoreCase);
+
+                var notable = pe.Imports
+                    .Where(m => m.FunctionCount > 0 && !IsApiSetModule(m.ModuleName))
+                    .OrderByDescending(m => m.FunctionCount)
+                    .ToList();
+                var apiSetModules = pe.Imports.Count(m => IsApiSetModule(m.ModuleName));
+                var emptyModules = pe.Imports.Count(m => m.FunctionCount == 0);
+
+                AppendKeyValueTable(html, new (string, string?)[]
+                {
+                    ("导入模块总数", pe.Imports.Count.ToString()),
+                    ("其中 API Set 转发", $"{apiSetModules} 个（api-ms-win-* 转发模块，属系统机制）"),
+                    ("其中无函数导入", $"{emptyModules} 个（仅声明依赖，未实际调用）"),
+                });
+
+                if (notable.Count > 0)
+                {
+                    html.Append("<h3>关键导入模块</h3>\n");
+                    AppendTable(html, new[] { "模块", "函数数", "代表性函数" },
+                        notable.Take(15).Select(m => new[]
+                        {
+                            m.ModuleName,
+                            m.FunctionCount.ToString(),
+                            string.Join(", ", m.Functions.Take(10).Select(f => f.Name)),
+                        }));
+                    if (notable.Count > 15)
+                        html.Append($"<p class=\"note\">另有 {notable.Count - 15} 个次要模块，见下方折叠清单。</p>\n");
+                }
+
+                html.Append(FoldStart($"全部 {pe.Imports.Count} 个导入模块明细"));
                 AppendTable(html, new[] { "模块", "函数数", "代表性函数" },
-                    pe.Imports.OrderByDescending(m => m.FunctionCount).Take(60)
+                    pe.Imports.OrderByDescending(m => m.FunctionCount)
                         .Select(m => new[]
                         {
                             m.ModuleName,
                             m.FunctionCount.ToString(),
                             string.Join(", ", m.Functions.Take(8).Select(f => f.Name)),
                         }));
+                html.Append(FoldEnd());
             }
 
             if (pe.Exports.Count > 0)
@@ -315,36 +468,72 @@ public sealed class ReportEngine
             }
         }
 
-        // 5. 动态分析
-        Section(5, "Dynamic Analysis 动态分析");
-        var sessions = result.Events
-            .Where(e => e.Type == MonitorEventType.SessionStart)
-            .ToList();
-        if (sessions.Count == 0)
+        // 5. 运行期观测（动态/网络/文件/注册表合并）
+        //
+        // 合并理由：这四个维度都来自"目标程序实际跑起来"的采集。原来各占一章、各进目录，
+        // 而多数静态分析场景下四章都是空的（各自只有一句"未采集到"），
+        // 翻四页看不到任何信息。合并后先给一张覆盖状态总览，有数据的再展开细看。
+        Section("runtime", "运行期观测", 5);
+
+        var sessions = result.Events.Where(e => e.Type == MonitorEventType.SessionStart).ToList();
+        var fileEvents = result.Events.Where(e => e.Type is MonitorEventType.FileCreate
+            or MonitorEventType.FileWrite or MonitorEventType.FileDelete or MonitorEventType.FileRename).ToList();
+        var regEvents = result.Events.Where(e => e.Type is MonitorEventType.RegistryCreate
+            or MonitorEventType.RegistryDelete or MonitorEventType.RegistrySet).ToList();
+        var procEvents = result.Events.Where(e => e.Type is MonitorEventType.ProcessStart
+            or MonitorEventType.ChildProcess).ToList();
+        var connections = result.Connections;
+
+        html.Append("<h3>采集覆盖状态</h3>\n");
+        AppendTable(html, new[] { "观测维度", "状态", "数据量", "说明" }, new[]
         {
-            html.Append("<p class=\"note\">本次分析未执行动态会话（测试 Profile 未包含动态任务，或目标未启动）。</p>\n");
+            new[] { "动态会话", sessions.Count > 0 ? "已执行" : "未执行",
+                    sessions.Count.ToString(),
+                    sessions.Count > 0 ? "目标程序已启动并完成监控"
+                                       : "测试 Profile 未包含动态任务，或目标未启动" },
+            new[] { "进程活动", procEvents.Count > 0 ? "已采集" : "无记录",
+                    $"{procEvents.Count} 条", procEvents.Count > 0 ? "含进程创建与子进程派生" : "未观测到进程创建" },
+            new[] { "文件系统", fileEvents.Count > 0 ? "已采集" : "无记录",
+                    $"{fileEvents.Count} 条", fileEvents.Count > 0 ? "含创建/写入/删除/重命名" : "目标未改动文件，或监控权限不足" },
+            new[] { "注册表", regEvents.Count > 0 ? "已采集" : "无记录",
+                    $"{regEvents.Count} 条", regEvents.Count > 0 ? "含键创建/删除/设值" : "目标未改动注册表，或监控权限不足" },
+            new[] { "网络连接", connections.Count > 0 ? "已采集" : "无记录",
+                    $"{connections.Count} 条", connections.Count > 0 ? "含连接表与域名解析" : "未采集到连接记录（标准用户下无抓包能力）" },
+        });
+        html.Append("<p class=\"note\">「未采集」表示该维度没有数据，"
+                    + "<strong>不代表该维度没有问题</strong> —— 请对照说明确认是目标行为如此，还是采集能力受限于权限/工具缺失。</p>\n");
+
+        if (sessions.Count == 0 && fileEvents.Count == 0 && regEvents.Count == 0
+            && procEvents.Count == 0 && connections.Count == 0)
+        {
+            html.Append("<p class=\"note\">本次为纯静态分析，未产生任何运行期数据。"
+                        + "如需观测运行行为，请在「测试执行」页面选择包含动态任务的 Profile 后重跑。</p>\n");
         }
         else
         {
-            foreach (var s in sessions)
-                html.Append($"<p class=\"note\">{E(s.Detail)}</p>\n");
-        }
+            if (sessions.Count > 0)
+            {
+                foreach (var s in sessions)
+                    html.Append($"<p class=\"note\">{E(s.Detail)}</p>\n");
+            }
 
-        var eventGroups = result.Events.GroupBy(e => e.Type).OrderByDescending(g => g.Count()).ToList();
-        if (eventGroups.Count > 0)
-        {
-            html.Append("<h3>事件构成</h3>\n");
-            AppendTable(html, new[] { "事件类型", "数量" },
-                eventGroups.Select(g => new[] { g.Key.ToString(), g.Count().ToString() }));
+            // 可疑事件时间线 —— 运行期最值得看的一张表，放在最前
+            var suspicious = result.Events.Where(e => e.IsSuspicious).ToList();
+            if (suspicious.Count > 0)
+            {
+                html.Append("<h3>可疑行为时间线</h3>\n");
+                AppendTable(html, new[] { "时间", "类型", "对象", "原因" },
+                    suspicious.Take(options.MaxEventRowsInReport).Select(e => new[]
+                    {
+                        e.TimeText, e.TypeLabel, e.Target, e.SuspicionReason ?? "—",
+                    }));
+            }
 
-            var processEvents = result.Events
-                .Where(e => e.Type is MonitorEventType.ProcessStart or MonitorEventType.ChildProcess)
-                .ToList();
-            if (processEvents.Count > 0)
+            if (procEvents.Count > 0)
             {
                 html.Append("<h3>进程创建</h3>\n");
                 AppendTable(html, new[] { "时间", "进程", "PID", "父 PID", "路径" },
-                    processEvents.Take(120).Select(e => new[]
+                    procEvents.Take(120).Select(e => new[]
                     {
                         e.TimeText, e.ProcessName, e.ProcessId.ToString(), e.ParentProcessId.ToString(),
                         e.ProcessPath ?? "—",
@@ -360,124 +549,159 @@ public sealed class ReportEngine
                     dllEvents.Take(60).Select(e => new[] { e.TimeText, e.ProcessName, e.Target }));
             }
 
-            var suspicious = result.Events.Where(e => e.IsSuspicious).ToList();
-            if (suspicious.Count > 0)
+            if (connections.Count > 0)
             {
-                html.Append("<h3>可疑行为时间线</h3>\n");
-                AppendTable(html, new[] { "时间", "类型", "对象", "原因" },
-                    suspicious.Take(options.MaxEventRowsInReport).Select(e => new[]
-                    {
-                        e.TimeText, e.TypeLabel, e.Target, e.SuspicionReason ?? "—",
-                    }));
-            }
-        }
+                html.Append("<h3>网络连接</h3>\n");
+                html.Append($"<p>共 {connections.Count} 条连接，"
+                            + $"其中目标进程树相关 {connections.Count(c => c.IsFromTargetTree)} 条，"
+                            + $"解析到域名 {connections.Count(c => c.Domain is not null)} 条。</p>\n");
 
-        // 6. 网络分析
-        Section(6, "Network Analysis 网络分析");
-        var connections = result.Connections;
-        if (connections.Count == 0)
-        {
-            html.Append("<p class=\"note\">未采集到网络连接记录。</p>\n");
-        }
-        else
-        {
-            html.Append($"<p>共记录 {connections.Count} 条连接，"
-                        + $"其中目标进程树相关 {connections.Count(c => c.IsFromTargetTree)} 条，"
-                        + $"解析到域名 {connections.Count(c => c.Domain is not null)} 条。</p>\n");
-
-            var domains = connections.Where(c => c.Domain is not null)
-                .GroupBy(c => c.Domain!, StringComparer.OrdinalIgnoreCase)
-                .OrderByDescending(g => g.Count()).ToList();
-            if (domains.Count > 0)
-            {
-                html.Append("<h3>DNS / 域名</h3>\n");
-                AppendTable(html, new[] { "域名", "解析地址", "连接数", "端口" },
-                    domains.Take(60).Select(g => new[]
-                    {
-                        g.Key,
-                        string.Join(", ", g.Select(c => c.RemoteAddress).Distinct().Take(4)),
-                        g.Count().ToString(),
-                        string.Join("/", g.Select(c => c.RemotePort).Distinct().OrderBy(p => p).Take(5)),
-                    }));
-            }
-
-            html.Append("<h3>连接明细（目标进程树相关）</h3>\n");
-            AppendTable(html, new[] { "进程", "本地端点", "远端端点", "域名", "状态", "服务", "归因" },
-                connections.Where(c => c.IsFromTargetTree)
-                    .OrderByDescending(c => c.LastSeen)
-                    .Take(200)
-                    .Select(c => new[]
-                    {
-                        $"{c.ProcessName}({c.ProcessId})",
-                        c.LocalEndpoint,
-                        c.RemoteEndpoint,
-                        c.Domain ?? "—",
-                        c.StateText,
-                        c.ServiceHint,
-                        c.Attribution.ToString(),
-                    }));
-        }
-
-        // 7. 文件系统
-        Section(7, "File System 文件系统");
-        var fileEvents = result.Events.Where(e => e.Type is MonitorEventType.FileCreate
-            or MonitorEventType.FileWrite or MonitorEventType.FileDelete or MonitorEventType.FileRename).ToList();
-        if (fileEvents.Count == 0)
-        {
-            html.Append("<p class=\"note\">未采集到文件系统事件。</p>\n");
-        }
-        else
-        {
-            html.Append($"<p>共 {fileEvents.Count} 条文件事件，其中可执行文件相关 {fileEvents.Count(e => RuleContext.IsExecutablePath(e.Target))} 条。</p>\n");
-            AppendTable(html, new[] { "时间", "操作", "路径", "结果" },
-                fileEvents.Take(options.MaxEventRowsInReport)
-                    .Select(e => new[] { e.TimeText, e.Operation, e.Target, e.Result }));
-        }
-
-        // 8. 注册表
-        Section(8, "Registry 注册表");
-        var regEvents = result.Events.Where(e => e.Type is MonitorEventType.RegistryCreate
-            or MonitorEventType.RegistrySet or MonitorEventType.RegistryDelete).ToList();
-        if (regEvents.Count == 0)
-        {
-            html.Append("<p class=\"note\">未采集到注册表变更（可能是目标未修改注册表，或监控权限不足）。</p>\n");
-        }
-        else
-        {
-            html.Append($"<p>共 {regEvents.Count} 条注册表变更，其中自启动 / 持久化相关 "
-                        + $"{regEvents.Count(e => Engines.Dynamic.RegistryMonitor.IsPersistencePath(e.Target))} 条。</p>\n");
-            AppendTable(html, new[] { "时间", "操作", "键 / 值", "变化内容" },
-                regEvents.Take(options.MaxEventRowsInReport).Select(e => new[]
+                var domains = connections.Where(c => c.Domain is not null)
+                    .GroupBy(c => c.Domain!, StringComparer.OrdinalIgnoreCase)
+                    .OrderByDescending(g => g.Count()).ToList();
+                if (domains.Count > 0)
                 {
-                    e.TimeText, e.Operation, e.Target, e.Detail ?? "—",
-                }));
+                    html.Append("<h4>DNS / 域名</h4>\n");
+                    AppendTable(html, new[] { "域名", "解析地址", "连接数", "端口" },
+                        domains.Take(60).Select(g => new[]
+                        {
+                            g.Key,
+                            string.Join(", ", g.Select(c => c.RemoteAddress).Distinct().Take(4)),
+                            g.Count().ToString(),
+                            string.Join("/", g.Select(c => c.RemotePort).Distinct().OrderBy(p => p).Take(5)),
+                        }));
+                }
+
+                html.Append("<h4>连接明细（目标进程树相关）</h4>\n");
+                AppendTable(html, new[] { "进程", "本地端点", "远端端点", "域名", "状态", "服务", "归因" },
+                    connections.Where(c => c.IsFromTargetTree)
+                        .OrderByDescending(c => c.LastSeen)
+                        .Take(200)
+                        .Select(c => new[]
+                        {
+                            $"{c.ProcessName}({c.ProcessId})",
+                            c.LocalEndpoint,
+                            c.RemoteEndpoint,
+                            c.Domain ?? "—",
+                            c.StateText,
+                            c.ServiceHint,
+                            c.Attribution.ToString(),
+                        }));
+            }
+
+            if (fileEvents.Count > 0)
+            {
+                html.Append("<h3>文件系统变更</h3>\n");
+                html.Append($"<p>共 {fileEvents.Count} 条文件事件，其中可执行文件相关 "
+                            + $"{fileEvents.Count(e => RuleContext.IsExecutablePath(e.Target))} 条。</p>\n");
+                AppendTable(html, new[] { "时间", "操作", "路径", "结果" },
+                    fileEvents.Take(options.MaxEventRowsInReport)
+                        .Select(e => new[] { e.TimeText, e.Operation, e.Target, e.Result }));
+            }
+
+            if (regEvents.Count > 0)
+            {
+                html.Append("<h3>注册表变更</h3>\n");
+                html.Append($"<p>共 {regEvents.Count} 条注册表变更，其中自启动 / 持久化相关 "
+                            + $"{regEvents.Count(e => Engines.Dynamic.RegistryMonitor.IsPersistencePath(e.Target))} 条。</p>\n");
+                AppendTable(html, new[] { "时间", "操作", "键 / 值", "变化内容" },
+                    regEvents.Take(options.MaxEventRowsInReport).Select(e => new[]
+                    {
+                        e.TimeText, e.Operation, e.Target, e.Detail ?? "—",
+                    }));
+            }
+
+            // 事件构成统计放最后 —— 它是"仪表盘"性质，读者看完具体内容才需要这个总览
+            var eventGroups = result.Events.GroupBy(e => e.Type).OrderByDescending(g => g.Count()).ToList();
+            if (eventGroups.Count > 0)
+            {
+                html.Append("<h3>事件构成统计</h3>\n");
+                AppendTable(html, new[] { "事件类型", "数量" },
+                    eventGroups.Select(g => new[] { g.Key.ToString(), g.Count().ToString() }));
+            }
         }
+
+        // 6. 依赖分析
 
         // 9. 依赖
-        Section(9, "Dependencies 依赖");
+        Section("dependencies", "依赖分析", 6);
         if (result.Dependencies.Count == 0)
         {
             html.Append("<p class=\"note\">未解析到依赖项。</p>\n");
         }
         else
         {
-            AppendTable(html, new[] { "模块", "状态", "解析路径", "来源", "可写目录", "版本", "签名" },
-                result.Dependencies.OrderByDescending(d => d.IsUserWritableLocation)
-                    .ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
-                    .Select(d => new[]
+            // 关键：把三类"看起来像问题、其实不是"的项分开，避免读者被噪声误导。
+            //
+            // 1) API Set 虚拟模块（api-ms-win-* / ext-ms-*）—— Windows 的 API 转发机制，
+            //    磁盘上本就没有对应文件，"未解析"是**正常现象**。原来逐条标"缺失"，
+            //    一次能刷出 50+ 行红色警报，把真正的风险项彻底淹没。
+            // 2) System32 / SysWOW64 的系统库—— 正常解析，无需逐个列。
+            // 3) 真正需要关注的：可写目录加载（劫持风险）、本地目录加载、真实未找到。
+            static bool IsApiSet(DependencyInfo d) =>
+                d.SearchSource.Contains("API Set", StringComparison.OrdinalIgnoreCase);
+
+            var apiSets = result.Dependencies.Where(IsApiSet).ToList();
+            var suspicious = result.Dependencies
+                .Where(d => !IsApiSet(d))
+                .Where(d => d.IsUserWritableLocation || !d.IsPresent
+                            || d.SearchSource is "应用目录" or "附加搜索目录")
+                .OrderByDescending(d => d.IsUserWritableLocation)
+                .ThenBy(d => d.IsPresent)
+                .ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var sysLibs = result.Dependencies.Count - apiSets.Count - suspicious.Count;
+
+            AppendKeyValueTable(html, new (string, string?)[]
+            {
+                ("依赖总数", result.Dependencies.Count.ToString()),
+                ("API Set 虚拟模块", $"{apiSets.Count} 个（Windows API 转发机制，磁盘无实体文件，未解析属正常）"),
+                ("系统库（System32 / SysWOW64）", $"{sysLibs} 个，正常解析"),
+                ("需关注项", suspicious.Count == 0 ? "无" : $"{suspicious.Count} 个（见下表）"),
+            });
+
+            if (suspicious.Count == 0)
+            {
+                html.Append("<p class=\"note\">未发现从可写目录加载、或真实缺失的依赖项 —— "
+                            + "依赖加载路径未见劫持风险。</p>\n");
+            }
+            else
+            {
+                html.Append("<h3>需关注的依赖项</h3>\n");
+                AppendTable(html, new[] { "模块", "状态", "解析路径", "来源", "可写目录", "版本", "签名" },
+                    suspicious.Select(d => new[]
                     {
                         d.Name,
-                        d.IsPresent ? "已解析" : "缺失",
+                        d.IsPresent ? "已解析" : "未找到",
                         d.ResolvedPath ?? "—",
                         d.SearchSource,
                         d.IsUserWritableLocation ? "是 ⚠" : "否",
                         d.Version ?? "—",
                         d.IsSigned switch { true => "有效", false => "无签名", null => "—" },
                     }));
+            }
+
+            // 全量依赖清单折叠进附录区，供需要逐条核对时展开
+            if (result.Dependencies.Count > suspicious.Count)
+            {
+                html.Append(FoldStart($"全部 {result.Dependencies.Count} 个依赖项明细"));
+                AppendTable(html, new[] { "模块", "状态", "来源", "版本", "签名" },
+                    result.Dependencies.OrderByDescending(d => d.IsUserWritableLocation)
+                        .ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+                        .Select(d => new[]
+                        {
+                            d.Name,
+                            d.IsPresent ? "已解析" : "未解析",
+                            d.SearchSource,
+                            d.Version ?? "—",
+                            d.IsSigned switch { true => "有效", false => "无签名", null => "—" },
+                        }));
+                html.Append(FoldEnd());
+            }
         }
 
         // 10. Security Findings
-        Section(10, "Security Findings 安全发现");
+        Section("findings", "安全发现", 7);
         if (result.Findings.Count == 0)
         {
             html.Append("<p class=\"note\">规则引擎未产生任何发现。这表示「在本次测试覆盖面内未发现问题」，"
@@ -496,14 +720,10 @@ public sealed class ReportEngine
                 html.Append("<table class=\"data compact\"><tbody>\n");
                 FRow("规则", $"{finding.RuleId}（{finding.Category}）");
                 FRow("置信度", finding.ConfidenceText);
-                FRow("状态", finding.Status switch
-                {
-                    FindingStatus.Open => "待确认",
-                    FindingStatus.Confirmed => "已确认",
-                    FindingStatus.FalsePositive => "误报",
-                    FindingStatus.Remediated => "已修复",
-                    _ => "接受风险",
-                });
+                // 处理状态统一取模型上的 StatusText（唯一口径），并标出是否已人工复核
+                FRow("处理状态", finding.Status == FindingStatus.Open
+                    ? "待处理（未经人工复核）"
+                    : $"{finding.StatusText}（已人工复核）");
                 FRow("命中对象", finding.Target);
                 if (finding.CweId is not null) FRow("CWE", finding.CweId);
                 if (finding.OwaspCategory is not null) FRow("OWASP", finding.OwaspCategory);
@@ -531,6 +751,13 @@ public sealed class ReportEngine
                     html.Append($"<div class=\"prose recommend\">{E(finding.Recommendation)}</div>\n");
                 }
 
+                // 人工复核意见（§9 人工深入分析）——只有复核过的条目才有，放在整改建议之后
+                if (!string.IsNullOrWhiteSpace(finding.AnalystNote))
+                {
+                    html.Append("<h4>人工复核意见</h4>\n");
+                    html.Append($"<div class=\"prose note\">{E(finding.AnalystNote).Replace("\n", "<br>")}</div>\n");
+                }
+
                 var linkedEvidence = result.Evidence.Where(e => finding.EvidenceIds.Contains(e.Id)).ToList();
                 if (linkedEvidence.Count > 0)
                 {
@@ -556,7 +783,7 @@ public sealed class ReportEngine
         }
 
         // 11. 证据
-        Section(11, "Evidence 证据");
+        Section("evidence", "证据链", 8);
         if (!options.IncludeEvidenceAppendix)
         {
             html.Append("<p class=\"note\">按报告设置，证据附录已在本次导出中省略。</p>\n");
@@ -572,7 +799,7 @@ public sealed class ReportEngine
         }
 
         // 12. 风险整改
-        Section(12, "Risk Remediation 风险整改");
+        Section("remediation", "风险整改", 9);
         if (result.Findings.Count == 0)
         {
             html.Append("<p class=\"note\">无待整改项。</p>\n");
@@ -581,11 +808,12 @@ public sealed class ReportEngine
         {
             html.Append("<p>按严重级与整改成本排序，建议按以下顺序推进。优先级 P0 应立即处理，"
                         + "P1 在下一个迭代修复，P2 纳入技术债跟踪，P3 视情况优化。</p>\n");
-            AppendTable(html, new[] { "优先级", "编号", "问题", "建议动作", "验证方式" },
+            AppendTable(html, new[] { "优先级", "编号", "处理状态", "问题", "建议动作", "验证方式" },
                 result.Findings.Select(f => new[]
                 {
                     PriorityOf(f.Severity),
                     f.Id,
+                    f.StatusText,
                     f.Title,
                     f.Recommendation ?? "—",
                     VerificationOf(f),
@@ -593,8 +821,8 @@ public sealed class ReportEngine
         }
 
         // 13. 附录
-        Section(13, "Appendix 附录");
-        html.Append("<h3>13.1 分析产物</h3>\n");
+        Section("appendix", "附录", 10);
+        html.Append("<h3>10.1 分析产物</h3>\n");
         html.Append("<ul class=\"related\">\n");
         foreach (var artifact in result.Project is null ? Array.Empty<string>() : new[]
                  {
@@ -611,21 +839,36 @@ public sealed class ReportEngine
 
         if (options.IncludeStringsSample && result.Strings.Count > 0)
         {
-            html.Append("<h3>13.2 字符串提取（按类别）</h3>\n");
-            foreach (var group in Strings.ExtractCategoriesInOrder(result.Strings).Take(8))
+            // 各类别只给统计 + 抽样。原来 General 类别（通常是 800+ 条编译器/汇编碎片）
+            // 会刷满整页无信息量的字符串，把有意义的 URL / 路径 / API 名埋掉。
+            html.Append("<h3>10.2 字符串提取统计</h3>\n");
+            var allGroups = Strings.ExtractCategoriesInOrder(result.Strings).ToList();
+            AppendTable(html, new[] { "类别", "条数", "说明" },
+                allGroups.Select(g => new[]
+                {
+                    g.Key,
+                    g.Value.Count.ToString(),
+                    Strings.CategoryHint(g.Key),
+                }));
+            html.Append($"<p class=\"note\">共提取 {result.Strings.Count} 条字符串。"
+                        + "下方按类别给出代表性样本（每类最多 20 条，按偏移排序）；"
+                        + "全量数据见 <code>Static Analysis/strings.json</code>。</p>\n");
+
+            foreach (var group in allGroups.Where(g => g.Key != "General").Take(7))
             {
-                html.Append($"<h4>{E(group.Key)}（{group.Value.Count} 条）</h4>\n");
+                html.Append(FoldStart($"{group.Key}（{group.Value.Count} 条，显示前 20）"));
                 AppendTable(html, new[] { "字符串", "节区", "偏移", "编码" },
-                    group.Value.Take(30).Select(s => new[]
+                    group.Value.Take(20).Select(s => new[]
                     {
                         Truncate(s.Value, 160), s.Section, $"0x{s.Offset:X}", s.Encoding,
                     }));
+                html.Append(FoldEnd());
             }
         }
 
         if (options.IncludeRawEventSample && result.Events.Count > 0)
         {
-            html.Append("<h3>13.3 事件流样例</h3>\n");
+            html.Append("<h3>10.3 事件流样例</h3>\n");
             AppendTable(html, new[] { "时间", "类型", "进程", "对象", "操作", "结果" },
                 result.Events.Take(200).Select(e => new[]
                 {
@@ -633,7 +876,7 @@ public sealed class ReportEngine
                 }));
         }
 
-        html.Append("<h3>13.4 报告局限与免责说明</h3>\n");
+        html.Append("<h3>10.4 报告局限与免责说明</h3>\n");
         html.Append("<div class=\"prose\">\n");
         html.Append("<p>本报告的所有结论均基于 WinSecLab 在本次会话中实际采集到的证据。以下因素会影响结论的完整性：</p>\n<ul>\n");
         html.Append("<li>内置文件与注册表监控采用「路径相关性 + 时间窗」归因，无法像内核级监控那样把每个事件精确绑定到发起线程；"
@@ -645,7 +888,7 @@ public sealed class ReportEngine
 
         if (options.IncludeSecurityGraph && result.GraphNodes.Count > 0)
         {
-            html.Append("<h3>13.5 安全关系图（Security Graph）</h3>\n");
+            html.Append("<h3>10.5 安全关系图（Security Graph）</h3>\n");
             html.Append("<p>中心为被测程序，向外依次为模块 / 网络 / 进程 / 文件 / 注册表 / 发现。红色节点表示可疑。</p>\n");
             html.Append(BuildGraphSvg(result));
         }
@@ -660,29 +903,70 @@ public sealed class ReportEngine
         return html.ToString();
     }
 
-    private static readonly (string Title, int Number)[] SectionList =
+    /// <summary>
+    /// 章节目录。标题用纯中文（原来中英双写 `Executive Summary 执行摘要` 冗长且不美观），
+    /// 锚点用显式 slug —— 中文标题无法从字符推导出稳定的 URL 片段。
+    /// </summary>
+    private static readonly (string Slug, string Title, int Number)[] SectionList =
     {
-        ("Executive Summary 执行摘要", 1),
-        ("Application Information 程序信息", 2),
-        ("Test Environment 测试环境", 3),
-        ("Static Analysis 静态分析", 4),
-        ("Dynamic Analysis 动态分析", 5),
-        ("Network Analysis 网络分析", 6),
-        ("File System 文件系统", 7),
-        ("Registry 注册表", 8),
-        ("Dependencies 依赖", 9),
-        ("Security Findings 安全发现", 10),
-        ("Evidence 证据", 11),
-        ("Risk Remediation 风险整改", 12),
-        ("Appendix 附录", 13),
+        ("executive", "执行摘要", 1),
+        ("application", "程序信息", 2),
+        ("environment", "测试环境", 3),
+        ("static", "静态分析", 4),
+        ("runtime", "运行期观测", 5),
+        ("dependencies", "依赖分析", 6),
+        ("findings", "安全发现", 7),
+        ("evidence", "证据链", 8),
+        ("remediation", "风险整改", 9),
+        ("appendix", "附录", 10),
     };
 
-    private static string Slug(string title) =>
-        "sec-" + new string(title.TakeWhile(c => char.IsLetterOrDigit(c) || c == '-').ToArray()).ToLowerInvariant();
+    private static string Slug(string slug) => "sec-" + slug;
+
+    /// <summary>
+    /// 折叠块。屏幕上是可点击展开的面板；打印时由 CSS 强制展开，保证 PDF 不丢明细。
+    /// 用 checkbox 而非 &lt;details&gt;：浏览器不会在打印时展开未 open 的 details。
+    /// </summary>
+    internal static string FoldStart(string title)
+    {
+        var id = "fold-" + Math.Abs(title.GetHashCode()).ToString("x");
+        return $"<div class=\"fold\"><input type=\"checkbox\" class=\"fold-toggle\" id=\"{id}\">"
+             + $"<label class=\"fold-head\" for=\"{id}\">{E(title)}</label><div class=\"fold-body\">";
+    }
+
+    internal static string FoldEnd() => "</div></div>\n";
+
+    /// <summary>
+    /// 取整改建议的第一句，用于摘要里的一行式"建议动作"。
+    /// 完整建议往往两三句（含验证方式），摘要把整段塞进去会撑爆表格。
+    /// </summary>
+    private static string FirstSentence(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "—";
+        var t = text.Trim();
+        foreach (var sep in new[] { "。", "；", "\n" })
+        {
+            var idx = t.IndexOf(sep, StringComparison.Ordinal);
+            if (idx > 0 && idx < 120) return t[..(idx + 1)];
+        }
+        return t.Length > 120 ? t[..120] + "…" : t;
+    }
+
+    /// <summary>哈希只显示前 12 位（完整值在「程序信息」节里，这里只需够区分）。</summary>
+    /// <summary>
+    /// 哈希截断展示。截前 12 位在"两轮哈希前缀相同"的场景下毫无区分度
+    /// （看起来一模一样，读者以为没变），所以这里改成首尾各取一段。
+    /// </summary>
+    private static string Short(string? hash) =>
+        string.IsNullOrWhiteSpace(hash) ? "—"
+        : hash.Length <= 12 ? hash
+        : $"{hash[..8]}…{hash[^4..]}";
+
+    /// <summary>带符号的差值：0 显示 "0"，正数带 +，负数自带 -。</summary>
+    private static string Signed(int delta) => delta > 0 ? $"+{delta}" : delta.ToString();
 
     private static string PriorityOf(Severity severity) => severity switch
-    {
-        Severity.Critical => "P0 立即",
+    {        Severity.Critical => "P0 立即",
         Severity.High => "P0 立即",
         Severity.Medium => "P1 下个迭代",
         Severity.Low => "P2 技术债",
@@ -757,21 +1041,96 @@ public sealed class ReportEngine
         md.Append($"　　**密级：** {options.Classification}\n\n");
         md.Append("> 本报告由 WinSecLab 自动生成；所有结论均可回溯到原始证据。\n\n");
 
-        md.Append("## 1. Executive Summary 执行摘要\n\n");
+        md.Append("## 1. 执行摘要\n\n");
         md.Append("| 严重 | 高危 | 中危 | 低危 | 信息 | 合计 |\n|---|---|---|---|---|---|\n");
         md.Append($"| {stats.Critical} | {stats.High} | {stats.Medium} | {stats.Low} | {stats.Info} | {stats.Total} |\n\n");
         md.Append($"**总体结论：** {stats.OverallVerdict}\n\n{stats.VerdictDetail}\n\n");
 
-        if (result.Findings.Count > 0)
+        // 需立即关注（中危及以上）—— Markdown 版的行动清单
+        var mdActionables = result.Findings
+            .Where(f => f.Severity >= Severity.Medium)
+            .OrderByDescending(f => f.Severity)
+            .ThenBy(f => f.Id, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (mdActionables.Count > 0)
         {
-            md.Append("### 关键发现\n\n");
-            md.Append("| 编号 | 等级 | 标题 | 置信度 | 类别 |\n|---|---|---|---|---|\n");
-            foreach (var f in result.Findings.Take(30))
-                md.Append($"| {f.Id} | {f.SeverityText} | {f.Title} | {f.ConfidenceText} | {f.Category} |\n");
+            md.Append("### 需立即关注\n\n");
+            md.Append("| 编号 | 等级 | 问题 | 建议动作 |\n|---|---|---|---|\n");
+            foreach (var f in mdActionables)
+                md.Append($"| {f.Id} | {f.SeverityText} | {f.Title} | {FirstSentence(f.Recommendation)} |\n");
             md.Append('\n');
         }
 
-        md.Append("## 2. Application Information 程序信息\n\n");
+        if (result.Findings.Count > 0)
+        {
+            var mdReviewed = result.Findings.Count(f => f.Status != FindingStatus.Open);
+            md.Append("### 发现项清单\n\n");
+            if (mdReviewed > 0)
+            {
+                md.Append($"共 {result.Findings.Count} 条，其中 **{mdReviewed} 条已经人工复核**"
+                          + $"（已确认 / 误报 / 接受风险 / 已整改），{result.Findings.Count - mdReviewed} 条待处理。\n\n");
+            }
+            md.Append("| 编号 | 等级 | 标题 | 置信度 | 类别 | 处理状态 |\n|---|---|---|---|---|---|\n");
+            foreach (var f in result.Findings.OrderByDescending(x => x.Severity).ThenBy(x => x.Id))
+                md.Append($"| {f.Id} | {f.SeverityText} | {f.Title} | {f.ConfidenceText} | {f.Category} | {f.StatusText} |\n");
+            md.Append('\n');
+        }
+
+        md.Append("### 采集覆盖一览\n\n| 维度 | 覆盖情况 |\n|---|---|\n");
+        md.Append($"| 静态分析 | {(result.Pe is not null ? "已完成" : "未执行")} |\n");
+        md.Append($"| 动态分析 | {(result.Events.Any(e => e.Type == MonitorEventType.SessionStart) ? "已执行" : "未执行")} |\n");
+        md.Append($"| 网络采集 | {(result.Connections.Count > 0 ? "已采集" : "未采集")} |\n");
+        md.Append($"| 权限级别 | {(result.Project?.Environment.IsElevated == true ? "管理员" : "标准用户（部分证据精度受限）")} |\n");
+        md.Append($"| 证据条数 | {result.Evidence.Count} |\n");
+        md.Append($"| 人工复核 | {(result.Findings.Count == 0 ? "无发现项需复核" : $"{result.Findings.Count(f => f.Status != FindingStatus.Open)}/{result.Findings.Count} 条已复核")} |\n\n");
+
+        // 与上次对比（回归测试）—— Markdown 版
+        if (options.Comparison is { Baseline: not null, Current: not null } mcmp)
+        {
+            md.Append("### 与上次对比\n\n");
+            md.Append($"与上一轮快照（{mcmp.Baseline!.CapturedAt:yyyy-MM-dd HH:mm}）对比：**{mcmp.Verdict}**\n\n");
+            if (mcmp.TargetChanged)
+            {
+                md.Append($"> ⚠ 两轮样本哈希不一致（{Short(mcmp.Baseline.TargetSha256)} → {Short(mcmp.Current!.TargetSha256)}），"
+                          + "差异可能来自版本本身而非行为变化。\n\n");
+            }
+            md.Append("| 类别 | 数量 | 说明 |\n|---|---|---|\n");
+            md.Append($"| 发现项总数 | {mcmp.Current!.TotalFindings} | 上轮 {mcmp.Baseline.TotalFindings}，变化 {Signed(mcmp.DeltaFindings)} |\n");
+            md.Append($"| 新增 | {mcmp.Added.Count} | {(mcmp.Added.Count == 0 ? "无" : "本轮新命中，需重点复核")} |\n");
+            md.Append($"| 消失 | {mcmp.Removed.Count} | {(mcmp.Removed.Count == 0 ? "无" : "上轮有、本轮未再命中（可能已修复）")} |\n");
+            md.Append($"| 发生变化 | {mcmp.Changed.Count} | {(mcmp.Changed.Count == 0 ? "无" : "严重级或处理状态变化")} |\n");
+            md.Append($"| 事件总数 | {mcmp.Current.EventCount} | 上轮 {mcmp.Baseline.EventCount}，变化 {Signed(mcmp.DeltaEvents)} |\n");
+            md.Append($"| 网络连接 | {mcmp.Current.ConnectionCount} | 上轮 {mcmp.Baseline.ConnectionCount}，变化 {Signed(mcmp.DeltaConnections)} |\n\n");
+
+            if (mcmp.Added.Count > 0)
+            {
+                md.Append("**新增发现**\n\n| 编号 | 等级 | 标题 | 类别 |\n|---|---|---|---|\n");
+                foreach (var f in mcmp.Added)
+                    md.Append($"| {f.Id} | {f.SeverityText} | {f.Title} | {f.Category} |\n");
+                md.Append('\n');
+            }
+            if (mcmp.Removed.Count > 0)
+            {
+                md.Append("**消失发现**\n\n| 编号 | 等级 | 标题 | 类别 |\n|---|---|---|---|\n");
+                foreach (var f in mcmp.Removed)
+                    md.Append($"| {f.Id} | {f.SeverityText} | {f.Title} | {f.Category} |\n");
+                md.Append('\n');
+            }
+            if (mcmp.Changed.Count > 0)
+            {
+                md.Append("**变化明细**\n\n| 编号 | 标题 | 字段 | 变化前 | 变化后 |\n|---|---|---|---|---|\n");
+                foreach (var c in mcmp.Changed)
+                    md.Append($"| {c.Id} | {c.Title} | {c.Field} | {c.Before} | {c.After} |\n");
+                md.Append('\n');
+            }
+        }
+        else if (options.Comparison is { } mnoBaseline)
+        {
+            md.Append("### 与上次对比\n\n");
+            md.Append($"{mnoBaseline.Verdict}\n\n");
+        }
+
+        md.Append("## 2. 程序信息\n\n");
         md.Append("| 项 | 值 |\n|---|---|\n");
         md.Append($"| 文件路径 | `{target.FilePath}` |\n");
         md.Append($"| 文件大小 | {target.FileSize:N0} 字节 |\n");
@@ -784,7 +1143,7 @@ public sealed class ReportEngine
         md.Append($"| 签名者 | {result.Pe?.Signature.SignerSubject ?? "—"} |\n");
         md.Append($"| 识别类型 | {result.Project?.Detection.DisplayName ?? "—"}（{result.Project?.Detection.ConfidencePercent ?? 0}%）|\n\n");
 
-        md.Append("## 3. Test Environment 测试环境\n\n");
+        md.Append("## 3. 测试环境\n\n");
         var env = result.Project?.Environment;
         md.Append("| 项 | 值 |\n|---|---|\n");
         md.Append($"| 主机 | {env?.MachineName} |\n| 账号 | {env?.UserName} |\n");
@@ -801,7 +1160,7 @@ public sealed class ReportEngine
             md.Append('\n');
         }
 
-        md.Append("## 4. Static Analysis 静态分析\n\n");
+        md.Append("## 4. 静态分析\n\n");
         if (result.Pe is not null)
         {
             var pe = result.Pe;
@@ -821,82 +1180,194 @@ public sealed class ReportEngine
             md.Append('\n');
         }
 
-        md.Append("## 5. Dynamic Analysis 动态分析\n\n");
-        var eventGroups = result.Events.GroupBy(e => e.Type).OrderByDescending(g => g.Count()).ToList();
-        if (eventGroups.Count == 0)
+        // ── 5. 运行期观测（原动态/网络/文件/注册表四章合并） ─────────────────
+        md.Append("## 5. 运行期观测\n\n");
+
+        var mdSessions = result.Events.Where(e => e.Type == MonitorEventType.SessionStart).ToList();
+        var mdFileEvents = result.Events.Where(e => e.Type is MonitorEventType.FileCreate
+            or MonitorEventType.FileWrite or MonitorEventType.FileDelete or MonitorEventType.FileRename).ToList();
+        var mdRegEvents = result.Events.Where(e => e.Type is MonitorEventType.RegistryCreate
+            or MonitorEventType.RegistryDelete or MonitorEventType.RegistrySet).ToList();
+        var mdProcEvents = result.Events.Where(e => e.Type is MonitorEventType.ProcessStart
+            or MonitorEventType.ChildProcess).ToList();
+        var mdConnections = result.Connections;
+
+        // 采集覆盖状态 —— 先给"哪些维度采到了、哪些没采到"的全景，避免空章节被误读为"没问题"
+        md.Append("### 采集覆盖状态\n\n");
+        md.Append("| 观测维度 | 状态 | 数据量 | 说明 |\n|---|---|---|---|\n");
+        md.Append($"| 动态会话 | {(mdSessions.Count > 0 ? "已执行" : "未执行")} | {mdSessions.Count} | "
+                  + $"{(mdSessions.Count > 0 ? "目标程序已启动并完成监控" : "测试 Profile 未包含动态任务，或目标未启动")} |\n");
+        md.Append($"| 进程活动 | {(mdProcEvents.Count > 0 ? "已采集" : "无记录")} | {mdProcEvents.Count} 条 | "
+                  + $"{(mdProcEvents.Count > 0 ? "含进程创建与子进程派生" : "未观测到进程创建")} |\n");
+        md.Append($"| 文件系统 | {(mdFileEvents.Count > 0 ? "已采集" : "无记录")} | {mdFileEvents.Count} 条 | "
+                  + $"{(mdFileEvents.Count > 0 ? "含创建/写入/删除/重命名" : "目标未改动文件，或监控权限不足")} |\n");
+        md.Append($"| 注册表 | {(mdRegEvents.Count > 0 ? "已采集" : "无记录")} | {mdRegEvents.Count} 条 | "
+                  + $"{(mdRegEvents.Count > 0 ? "含键创建/删除/设值" : "目标未改动注册表，或监控权限不足")} |\n");
+        md.Append($"| 网络连接 | {(mdConnections.Count > 0 ? "已采集" : "无记录")} | {mdConnections.Count} 条 | "
+                  + $"{(mdConnections.Count > 0 ? "含连接表与域名解析" : "未采集到连接记录（标准用户下无抓包能力）")} |\n\n");
+        md.Append("> 「未采集」表示该维度没有数据，**不代表该维度没有问题** —— "
+                  + "请对照说明确认是目标行为如此，还是采集能力受限于权限 / 工具缺失。\n\n");
+
+        if (mdSessions.Count == 0 && mdFileEvents.Count == 0 && mdRegEvents.Count == 0
+            && mdProcEvents.Count == 0 && mdConnections.Count == 0)
         {
-            md.Append("本次分析未执行动态会话。\n\n");
+            md.Append("本次为纯静态分析，未产生任何运行期数据。"
+                      + "如需观测运行行为，请在「测试执行」页面选择包含动态任务的 Profile 后重跑。\n\n");
         }
         else
         {
-            md.Append("| 事件类型 | 数量 |\n|---|---|\n");
-            foreach (var g in eventGroups) md.Append($"| {g.Key} | {g.Count()} |\n");
-            md.Append('\n');
+            foreach (var s in mdSessions) md.Append($"- {s.Detail}\n");
+            if (mdSessions.Count > 0) md.Append('\n');
 
-            var suspicious = result.Events.Where(e => e.IsSuspicious).Take(80).ToList();
-            if (suspicious.Count > 0)
+            var mdSuspicious = result.Events.Where(e => e.IsSuspicious).ToList();
+            if (mdSuspicious.Count > 0)
             {
-                md.Append("### 可疑行为\n\n| 时间 | 类型 | 对象 | 原因 |\n|---|---|---|---|\n");
-                foreach (var e in suspicious)
+                md.Append("### 可疑行为时间线\n\n| 时间 | 类型 | 对象 | 原因 |\n|---|---|---|---|\n");
+                foreach (var e in mdSuspicious.Take(options.MaxEventRowsInReport))
                     md.Append($"| {e.TimeText} | {e.TypeLabel} | `{e.Target}` | {e.SuspicionReason ?? "—"} |\n");
+                md.Append('\n');
+            }
+
+            if (mdProcEvents.Count > 0)
+            {
+                md.Append("### 进程创建\n\n| 时间 | 进程 | PID | 父 PID | 路径 |\n|---|---|---|---|---|\n");
+                foreach (var e in mdProcEvents.Take(120))
+                    md.Append($"| {e.TimeText} | {e.ProcessName} | {e.ProcessId} | {e.ParentProcessId} | `{e.ProcessPath ?? "—"}` |\n");
+                md.Append('\n');
+            }
+
+            var mdDllEvents = result.Events.Where(e => e.Type == MonitorEventType.DllLoad)
+                .Where(e => e.IsSuspicious).ToList();
+            if (mdDllEvents.Count > 0)
+            {
+                md.Append("### 可疑模块加载（来自用户可写目录）\n\n| 时间 | 进程 | 模块路径 |\n|---|---|---|\n");
+                foreach (var e in mdDllEvents.Take(60))
+                    md.Append($"| {e.TimeText} | {e.ProcessName} | `{e.Target}` |\n");
+                md.Append('\n');
+            }
+
+            if (mdConnections.Count > 0)
+            {
+                md.Append("### 网络连接\n\n");
+                md.Append($"共 {mdConnections.Count} 条连接，其中目标进程树相关 "
+                          + $"{mdConnections.Count(c => c.IsFromTargetTree)} 条，"
+                          + $"解析到域名 {mdConnections.Count(c => c.Domain is not null)} 条。\n\n");
+
+                var mdDomains = mdConnections.Where(c => c.Domain is not null)
+                    .GroupBy(c => c.Domain!, StringComparer.OrdinalIgnoreCase)
+                    .OrderByDescending(g => g.Count()).ToList();
+                if (mdDomains.Count > 0)
+                {
+                    md.Append("**DNS / 域名**\n\n| 域名 | 解析地址 | 连接数 | 端口 |\n|---|---|---|---|\n");
+                    foreach (var g in mdDomains.Take(60))
+                        md.Append($"| {g.Key} | {string.Join(", ", g.Select(c => c.RemoteAddress).Distinct().Take(4))} "
+                                  + $"| {g.Count()} | {string.Join("/", g.Select(c => c.RemotePort).Distinct().OrderBy(p => p).Take(5))} |\n");
+                    md.Append('\n');
+                }
+
+                md.Append("**连接明细（目标进程树相关）**\n\n| 进程 | 本地端点 | 远端端点 | 域名 | 状态 |\n|---|---|---|---|---|\n");
+                foreach (var c in mdConnections.Where(c => c.IsFromTargetTree).OrderByDescending(c => c.LastSeen).Take(200))
+                    md.Append($"| {c.ProcessName}({c.ProcessId}) | {c.LocalEndpoint} | {c.RemoteEndpoint} "
+                              + $"| {c.Domain ?? "—"} | {c.StateText} |\n");
+                md.Append('\n');
+            }
+
+            if (result.Http.Count > 0)
+            {
+                md.Append("### HTTP 请求历史（代理捕获）\n\n| 方法 | URL | 状态 | 值得关注 |\n|---|---|---|---|\n");
+                foreach (var x in result.Http.Take(80))
+                    md.Append($"| {x.Method} | `{x.Url}` | {x.StatusTextCombined} | {string.Join("；", x.InterestReasons)} |\n");
+                md.Append('\n');
+            }
+
+            if (mdFileEvents.Count > 0)
+            {
+                md.Append("### 文件系统变更\n\n");
+                md.Append($"共 {mdFileEvents.Count} 条文件事件，其中可执行文件相关 "
+                          + $"{mdFileEvents.Count(e => RuleContext.IsExecutablePath(e.Target))} 条。\n\n");
+                md.Append("| 时间 | 操作 | 路径 | 结果 |\n|---|---|---|---|\n");
+                foreach (var e in mdFileEvents.Take(options.MaxEventRowsInReport))
+                    md.Append($"| {e.TimeText} | {e.Operation} | `{e.Target}` | {e.Result} |\n");
+                md.Append('\n');
+            }
+
+            if (mdRegEvents.Count > 0)
+            {
+                md.Append("### 注册表变更\n\n");
+                md.Append($"共 {mdRegEvents.Count} 条注册表变更，其中自启动 / 持久化相关 "
+                          + $"{mdRegEvents.Count(e => Engines.Dynamic.RegistryMonitor.IsPersistencePath(e.Target))} 条。\n\n");
+                md.Append("| 时间 | 操作 | 键 / 值 | 变化内容 |\n|---|---|---|---|\n");
+                foreach (var e in mdRegEvents.Take(options.MaxEventRowsInReport))
+                    md.Append($"| {e.TimeText} | {e.Operation} | `{e.Target}` | {e.Detail ?? "—"} |\n");
+                md.Append('\n');
+            }
+
+            // 事件构成统计放最后 —— 仪表盘性质，读者看完具体内容才需要这个总览
+            var mdEventGroups = result.Events.GroupBy(e => e.Type).OrderByDescending(g => g.Count()).ToList();
+            if (mdEventGroups.Count > 0)
+            {
+                md.Append("### 事件构成统计\n\n| 事件类型 | 数量 |\n|---|---|\n");
+                foreach (var g in mdEventGroups) md.Append($"| {g.Key} | {g.Count()} |\n");
                 md.Append('\n');
             }
         }
 
-        md.Append("## 6. Network Analysis 网络分析\n\n");
-        if (result.Connections.Count == 0)
+        // ── 6. 依赖分析 ────────────────────────────────────────────────
+        md.Append("## 6. 依赖分析\n\n");
+        if (result.Dependencies.Count == 0)
         {
-            md.Append("未采集到网络连接。\n\n");
+            md.Append("未解析到依赖项。\n\n");
         }
         else
         {
-            md.Append($"共 {result.Connections.Count} 条连接记录。\n\n");
-            md.Append("| 进程 | 远端 | 域名 | 端口 | 状态 |\n|---|---|---|---|---|\n");
-            foreach (var c in result.Connections.Where(c => c.IsFromTargetTree).Take(80))
-                md.Append($"| {c.ProcessName} | {c.RemoteAddress} | {c.Domain ?? "—"} | {c.RemotePort} | {c.StateText} |\n");
-            md.Append('\n');
+            static bool IsApiSetMd(DependencyInfo d) =>
+                d.SearchSource.Contains("API Set", StringComparison.OrdinalIgnoreCase);
+
+            var mdApiSets = result.Dependencies.Where(IsApiSetMd).ToList();
+            var mdDepSuspicious = result.Dependencies
+                .Where(d => !IsApiSetMd(d))
+                .Where(d => d.IsUserWritableLocation || !d.IsPresent
+                            || d.SearchSource is "应用目录" or "附加搜索目录")
+                .OrderByDescending(d => d.IsUserWritableLocation)
+                .ThenBy(d => d.IsPresent)
+                .ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var mdSysLibs = result.Dependencies.Count - mdApiSets.Count - mdDepSuspicious.Count;
+
+            md.Append("| 项目 | 数量 / 说明 |\n|---|---|\n");
+            md.Append($"| 依赖总数 | {result.Dependencies.Count} |\n");
+            md.Append($"| API Set 虚拟模块 | {mdApiSets.Count} 个（Windows API 转发机制，磁盘无实体文件，未解析属正常） |\n");
+            md.Append($"| 系统库（System32 / SysWOW64） | {mdSysLibs} 个，正常解析 |\n");
+            md.Append($"| 需关注项 | {(mdDepSuspicious.Count == 0 ? "无" : mdDepSuspicious.Count + " 个（见下表）")} |\n\n");
+
+            if (mdDepSuspicious.Count == 0)
+            {
+                md.Append("未发现从可写目录加载、或真实缺失的依赖项 —— 依赖加载路径未见劫持风险。\n\n");
+            }
+            else
+            {
+                md.Append("### 需关注的依赖项\n\n| 模块 | 状态 | 解析路径 | 来源 | 可写目录 | 版本 | 签名 |\n|---|---|---|---|---|---|---|\n");
+                foreach (var d in mdDepSuspicious)
+                    md.Append($"| {d.Name} | {(d.IsPresent ? "已解析" : "未找到")} | `{d.ResolvedPath ?? "—"}` "
+                              + $"| {d.SearchSource} | {(d.IsUserWritableLocation ? "是 ⚠" : "否")} "
+                              + $"| {d.Version ?? "—"} | {d.IsSigned switch { true => "有效", false => "无签名", null => "—" }} |\n");
+                md.Append('\n');
+            }
+
+            if (result.Dependencies.Count > mdDepSuspicious.Count)
+            {
+                md.Append("<details><summary>全部 " + result.Dependencies.Count + " 个依赖项明细</summary>\n\n");
+                md.Append("| 模块 | 状态 | 来源 | 版本 | 签名 |\n|---|---|---|---|---|\n");
+                foreach (var d in result.Dependencies.OrderByDescending(d => d.IsUserWritableLocation)
+                             .ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase))
+                    md.Append($"| {d.Name} | {(d.IsPresent ? "已解析" : "未解析")} | {d.SearchSource} "
+                              + $"| {d.Version ?? "—"} | {d.IsSigned switch { true => "有效", false => "无签名", null => "—" }} |\n");
+                md.Append("\n</details>\n\n");
+            }
         }
 
-        if (result.Http.Count > 0)
-        {
-            md.Append("### HTTP 请求历史（代理捕获）\n\n| 方法 | URL | 状态 | 值得关注 |\n|---|---|---|---|\n");
-            foreach (var x in result.Http.Take(80))
-                md.Append($"| {x.Method} | `{x.Url}` | {x.StatusTextCombined} | {string.Join("；", x.InterestReasons)} |\n");
-            md.Append('\n');
-        }
-
-        md.Append("## 7. File System 文件系统\n\n");
-        var fileEvents = result.Events.Where(e => e.Type is MonitorEventType.FileCreate
-            or MonitorEventType.FileWrite or MonitorEventType.FileDelete or MonitorEventType.FileRename).Take(120).ToList();
-        if (fileEvents.Count == 0) md.Append("未采集到文件事件。\n\n");
-        else
-        {
-            md.Append("| 时间 | 操作 | 路径 |\n|---|---|---|\n");
-            foreach (var e in fileEvents) md.Append($"| {e.TimeText} | {e.Operation} | `{e.Target}` |\n");
-            md.Append('\n');
-        }
-
-        md.Append("## 8. Registry 注册表\n\n");
-        var regEvents = result.Events.Where(e => e.Type is MonitorEventType.RegistryCreate
-            or MonitorEventType.RegistrySet or MonitorEventType.RegistryDelete).Take(120).ToList();
-        if (regEvents.Count == 0) md.Append("未采集到注册表变更。\n\n");
-        else
-        {
-            md.Append("| 时间 | 操作 | 键 / 值 | 变化 |\n|---|---|---|---|\n");
-            foreach (var e in regEvents) md.Append($"| {e.TimeText} | {e.Operation} | `{e.Target}` | {e.Detail ?? "—"} |\n");
-            md.Append('\n');
-        }
-
-        md.Append("## 9. Dependencies 依赖\n\n");
-        if (result.Dependencies.Count > 0)
-        {
-            md.Append("| 模块 | 状态 | 路径 | 可写目录 |\n|---|---|---|---|\n");
-            foreach (var d in result.Dependencies.Take(120))
-                md.Append($"| {d.Name} | {(d.IsPresent ? "已解析" : "缺失")} | `{d.ResolvedPath ?? "—"}` | {(d.IsUserWritableLocation ? "是" : "否")} |\n");
-            md.Append('\n');
-        }
-
-        md.Append("## 10. Security Findings 安全发现\n\n");
+        // ── 7. 安全发现 ────────────────────────────────────────────────
+        md.Append("## 7. 安全发现\n\n");
         if (result.Findings.Count == 0)
         {
             md.Append("本次规则引擎未产生发现。\n\n");
@@ -907,6 +1378,7 @@ public sealed class ReportEngine
             {
                 md.Append($"### {f.Id} · {f.Title}\n\n");
                 md.Append($"- **等级：** {f.SeverityText}　**置信度：** {f.ConfidenceText}　**类别：** {f.Category}\n");
+                md.Append($"- **处理状态：** {(f.Status == FindingStatus.Open ? "待处理（未经人工复核）" : $"{f.StatusText}（已人工复核）")}\n");
                 md.Append($"- **规则：** {f.RuleId}");
                 if (f.CweId is not null) md.Append($"　**CWE：** {f.CweId}");
                 if (f.OwaspCategory is not null) md.Append($"　**OWASP：** {f.OwaspCategory}");
@@ -916,38 +1388,90 @@ public sealed class ReportEngine
                 if (!string.IsNullOrEmpty(f.Impact)) md.Append($"**影响：** {f.Impact}\n\n");
                 if (!string.IsNullOrEmpty(f.Reproduction)) md.Append($"**复现步骤：**\n\n```\n{f.Reproduction}\n```\n\n");
                 if (!string.IsNullOrEmpty(f.Recommendation)) md.Append($"**整改建议：** {f.Recommendation}\n\n");
+                if (!string.IsNullOrWhiteSpace(f.AnalystNote)) md.Append($"**人工复核意见：** {f.AnalystNote}\n\n");
                 if (f.EvidenceIds.Count > 0) md.Append($"**关联证据：** {string.Join(", ", f.EvidenceIds)}\n\n");
                 md.Append("---\n\n");
             }
         }
 
-        md.Append("## 11. Evidence 证据\n\n");
-        md.Append($"共 {result.Evidence.Count} 条证据。\n\n");
-        if (options.IncludeEvidenceAppendix)
+        md.Append("## 8. 证据链\n\n");
+        if (!options.IncludeEvidenceAppendix)
         {
-            md.Append("| 证据 ID | 类型 | 标题 | 来源 |\n|---|---|---|---|\n");
+            md.Append("按报告设置，证据附录已在本次导出中省略。\n\n");
+        }
+        else
+        {
+            md.Append($"共 {result.Evidence.Count} 条证据，全部落盘在项目目录下，可通过证据 ID 在数据库中检索原始记录。\n\n");
+            md.Append("| 证据 ID | 类型 | 标题 | 来源 | 时间 |\n|---|---|---|---|---|\n");
             foreach (var e in result.Evidence.Take(options.MaxEvidenceRows))
-                md.Append($"| {e.Id} | {e.KindLabel} | {e.Title} | {e.Source} |\n");
+                md.Append($"| {e.Id} | {e.KindLabel} | {e.Title} | {e.Source} | {e.TimestampText} |\n");
             md.Append('\n');
         }
 
-        md.Append("## 12. Risk Remediation 风险整改\n\n");
+        // ── 9. 风险整改 ────────────────────────────────────────────────
+        md.Append("## 9. 风险整改\n\n");
         if (result.Findings.Count == 0) md.Append("无待整改项。\n\n");
         else
         {
-            md.Append("| 优先级 | 编号 | 问题 | 建议动作 |\n|---|---|---|---|\n");
+            md.Append("按严重级与整改成本排序，建议按以下顺序推进。优先级 P0 应立即处理，"
+                      + "P1 在下一个迭代修复，P2 纳入技术债跟踪，P3 视情况优化。\n\n");
+            md.Append("| 优先级 | 编号 | 处理状态 | 问题 | 建议动作 | 验证方式 |\n|---|---|---|---|---|---|\n");
             foreach (var f in result.Findings)
-                md.Append($"| {PriorityOf(f.Severity)} | {f.Id} | {f.Title} | {f.Recommendation ?? "—"} |\n");
+                md.Append($"| {PriorityOf(f.Severity)} | {f.Id} | {f.StatusText} | {f.Title} | {f.Recommendation ?? "—"} | {VerificationOf(f)} |\n");
             md.Append('\n');
         }
 
-        md.Append("## 13. Appendix 附录\n\n");
-        md.Append("### 13.1 报告局限\n\n");
-        md.Append("1. 内置文件 / 注册表监控为路径相关性与时间窗归因，非内核级精确归因；精确定性请启用 Process Monitor 适配器。\n");
-        md.Append("2. 未安装的第三方工具对应维度为空白，不代表该维度无问题。\n");
-        md.Append("3. HTTPS 未做中间人解密，仅记录 CONNECT 目标，不审计加密内容。\n");
-        md.Append("4. 自动发现只负责提示，中高危结论须人工复核证据后确认。\n\n");
-        md.Append("### 13.2 授权声明\n\n测试对象应为本人拥有或已明确获得书面授权测试的 Windows 应用与测试环境。\n\n");
+        // ── 10. 附录 ───────────────────────────────────────────────────
+        md.Append("## 10. 附录\n\n");
+        md.Append("### 10.1 分析产物\n\n");
+        if (result.Project is not null)
+        {
+            md.Append("- `Target/` —— 被测文件与依赖副本\n");
+            md.Append("- `Static Analysis/` —— PE 画像、字符串、依赖、.NET 元数据\n");
+            md.Append("- `Dynamic Analysis/` —— 事件流（JSONL）与进程树\n");
+            md.Append("- `Network/` —— 连接表、DNS、HTTP 历史\n");
+            md.Append("- `Findings/` —— 统一发现（JSON）\n");
+            md.Append("- `Reports/` —— 本报告\n");
+            md.Append("- `analysis.db` —— SQLite 证据库（可用任意 SQLite 客户端查询）\n\n");
+        }
+
+        if (options.IncludeStringsSample && result.Strings.Count > 0)
+        {
+            md.Append("### 10.2 字符串提取统计\n\n");
+            var mdGroups = Strings.ExtractCategoriesInOrder(result.Strings).ToList();
+            md.Append("| 类别 | 条数 | 说明 |\n|---|---|---|\n");
+            foreach (var g in mdGroups)
+                md.Append($"| {g.Key} | {g.Value.Count} | {Strings.CategoryHint(g.Key)} |\n");
+            md.Append('\n');
+            md.Append($"共提取 {result.Strings.Count} 条字符串。下方按类别给出代表性样本"
+                      + "（每类最多 20 条，按偏移排序）；全量数据见 `Static Analysis/strings.json`。\n\n");
+
+            foreach (var group in mdGroups.Where(g => g.Key != "General").Take(7))
+            {
+                md.Append($"<details><summary>{group.Key}（{group.Value.Count} 条，显示前 20）</summary>\n\n");
+                md.Append("| 字符串 | 节区 | 偏移 | 编码 |\n|---|---|---|---|\n");
+                foreach (var s in group.Value.Take(20))
+                    md.Append($"| `{Truncate(s.Value, 160)}` | {s.Section} | 0x{s.Offset:X} | {s.Encoding} |\n");
+                md.Append("\n</details>\n\n");
+            }
+        }
+
+        if (options.IncludeRawEventSample && result.Events.Count > 0)
+        {
+            md.Append("### 10.3 事件流样例\n\n| 时间 | 类型 | 进程 | 对象 | 操作 | 结果 |\n|---|---|---|---|---|---|\n");
+            foreach (var e in result.Events.Take(200))
+                md.Append($"| {e.TimeText} | {e.TypeLabel} | {e.ProcessName} | `{e.Target}` | {e.Operation} | {e.Result} |\n");
+            md.Append('\n');
+        }
+
+        md.Append("### 10.4 报告局限与免责说明\n\n");
+        md.Append("本报告的所有结论均基于 WinSecLab 在本次会话中实际采集到的证据。以下因素会影响结论的完整性：\n\n");
+        md.Append("1. 内置文件与注册表监控采用「路径相关性 + 时间窗」归因，无法像内核级监控那样把每个事件精确绑定到发起线程；"
+                  + "需要精确定性时请启用 Process Monitor 适配器复现。\n");
+        md.Append("2. 未安装的第三方工具（Wireshark / YARA / Ghidra 等）对应的分析维度为空白，不代表该维度没有问题。\n");
+        md.Append("3. HTTPS 流量未做中间人解密，仅记录 CONNECT 目标主机，无法审计加密后的请求内容。\n");
+        md.Append("4. 自动发现只负责提示；所有中高危结论都应经人工复核证据后确认。\n\n");
+        md.Append("测试对象应为本人拥有或已明确获得书面授权测试的 Windows 应用与测试环境。\n\n");
 
         md.Append("---\n\n_本报告由 WinSecLab 自动生成。_\n");
         return md.ToString();
@@ -1140,8 +1664,10 @@ public sealed class ReportEngine
         nav.toc { max-width: 1200px; margin: 26px auto 0; background: #fff; border: 1px solid #e3e8f0;
                   border-radius: 10px; padding: 18px 30px; }
         nav.toc h2 { margin: 0 0 8px; font-size: 16px; color: #2e5b9f; }
-        nav.toc ol { margin: 0; padding-left: 20px; columns: 2; }
+        nav.toc ul.toc-list { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 28px; }
+        nav.toc ul.toc-list li { margin: 0 0 5px; break-inside: avoid; }
         nav.toc a { color: #2e5b9f; text-decoration: none; }
+        nav.toc a .toc-num { display: inline-block; min-width: 20px; color: #8a95a8; font-variant-numeric: tabular-nums; }
         nav.toc a:hover { text-decoration: underline; }
         h2.section, section { max-width: 1200px; }
         h2.section { margin: 32px auto 12px; padding: 10px 18px; background: #fff; border-left: 5px solid #2e5b9f;
@@ -1180,6 +1706,7 @@ public sealed class ReportEngine
         .finding-title { font-size: 15.5px; font-weight: 600; }
         .prose { color: #333a48; }
         .prose.recommend { background: #f2f9f3; border-left: 3px solid #3f9c52; padding: 8px 14px; border-radius: 4px; }
+        .prose.note { background: #f3f6fb; border-left: 3px solid #2e5b9f; padding: 8px 14px; border-radius: 4px; }
         .note { color: #5b6478; font-size: 12.5px; background: #f6f8fb; border-radius: 6px; padding: 8px 12px; }
         .warning { color: #8a5a00; background: #fff8e8; border-left: 3px solid #e8a33d; border-radius: 4px;
                    padding: 8px 12px; font-size: 12.5px; }
@@ -1187,11 +1714,29 @@ public sealed class ReportEngine
         ul.related li { word-break: break-all; }
         code { background: #f1f3f8; padding: 1px 5px; border-radius: 4px; font-family: Consolas, monospace;
                font-size: 12px; }
+        /* 折叠明细：正文保持精简，全量数据按需展开。
+           为什么不用 <details>：浏览器无法在打印时强制展开未 open 的 details，
+           导出的 PDF 会静默丢掉明细数据（这对取证报告是致命的）。
+           改用 checkbox 折叠 —— 屏幕上可收可展，打印时用媒体查询强制全部展开。 */
+        .fold { margin: 10px 0 16px; border: 1px solid #e3e8f0; border-radius: 8px; background: #fbfcfe; }
+        .fold > input.fold-toggle { position: absolute; opacity: 0; pointer-events: none; }
+        .fold > label.fold-head { display: block; cursor: pointer; padding: 9px 14px; font-size: 12.5px;
+                                  color: #2e5b9f; font-weight: 600; user-select: none; }
+        .fold > label.fold-head::before { content: "▸ "; color: #7b8aa5; }
+        .fold > input.fold-toggle:checked + label.fold-head::before { content: "▾ "; }
+        .fold > label.fold-head:hover { background: #f2f6fd; border-radius: 8px; }
+        .fold > .fold-body { display: none; }
+        .fold > input.fold-toggle:checked + label.fold-head + .fold-body { display: block; }
+        .fold > .fold-body { border-top: 1px solid #e8ecf4; padding: 0 12px; }
+        .fold > .fold-body > table.data { margin: 10px 0; width: 100%; }
         footer { max-width: 1200px; margin: 30px auto 0; color: #8a93a8; font-size: 12px; text-align: center; }
         @media print {
           body { background: #fff; }
           h2.section, .sec-body, nav.toc, .finding { break-inside: avoid; }
           nav.toc { break-after: page; }
+          /* 打印时展开全部折叠内容，确保 PDF 不丢取证明细 */
+          .fold > label.fold-head { display: none; }
+          .fold > .fold-body { display: block; border-top: none; padding: 0; }
         }
         """;
 
@@ -1201,13 +1746,34 @@ public sealed class ReportEngine
         string.IsNullOrEmpty(value) ? "" : value.Length <= max ? value : value[..max] + "…";
 }
 
-/// <summary>字符串类别的展示顺序（把最相关的排在前面）。</summary>
+/// <summary>字符串类别的展示顺序（把最相关的排在前面，General 垫底）。</summary>
 internal static class Strings
 {
     private static readonly string[] Order =
     {
-        "URL", "Domain", "IPAddress", "Command", "Credential", "SecurityApi",
+        "Credential", "Command", "URL", "Domain", "IPAddress", "SecurityApi",
         "RegistryPath", "FilePath", "Crypto", "Sql", "UserAgent", "Guid", "Json", "Format", "General",
+    };
+
+    /// <summary>类别的中文解释 —— 光看英文类别名读者不知道它在说什么。</summary>
+    public static string CategoryHint(string category) => category switch
+    {
+        "Credential" => "口令 / 密钥 / Token 相关字面量，重点关注",
+        "Command" => "命令行调用与可执行程序名",
+        "URL" => "HTTP(S) / FTP 等网络地址",
+        "Domain" => "域名",
+        "IPAddress" => "IP 地址",
+        "SecurityApi" => "敏感 API 名称（进程创建、注入、加密等）",
+        "RegistryPath" => "注册表键路径",
+        "FilePath" => "文件与目录路径",
+        "Crypto" => "加密算法 / 证书相关标识",
+        "Sql" => "SQL 语句片段",
+        "UserAgent" => "HTTP User-Agent 字符串",
+        "Guid" => "GUID / CLSID 标识",
+        "Json" => "JSON 片段",
+        "Format" => "格式化字符串（常用于日志与拼接）",
+        "General" => "一般字符串，多为编译器常量与代码片段，信息量较低",
+        _ => "—",
     };
 
     public static IEnumerable<KeyValuePair<string, List<StringHit>>> ExtractCategoriesInOrder(IEnumerable<StringHit> hits)

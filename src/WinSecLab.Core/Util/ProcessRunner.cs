@@ -47,12 +47,18 @@ public static class ProcessRunner
         CancellationToken cancellationToken = default,
         Action<string>? log = null,
         Action<string>? onStdoutLine = null,
-        int maxCaptureBytes = MaxCaptureBytes)
+        int maxCaptureBytes = MaxCaptureBytes,
+        Encoding? outputEncoding = null,
+        IReadOnlyDictionary<string, string>? extraEnvironment = null)
     {
         var commandLine = $"\"{executable}\" {arguments}";
 
         if (!File.Exists(executable))
             return ToolRunResult.NotStarted(commandLine, $"可执行文件不存在：{executable}");
+
+        // 默认按 UTF-8 读；但 Sysinternals 系工具会吐 UTF-16LE（实测 sigcheck -c 的 CSV 就是），
+        // 传 encoding 才能正确解码 —— 否则会得到每个字符间夹 NUL 的乱码。
+        var enc = outputEncoding ?? Encoding.UTF8;
 
         var psi = new ProcessStartInfo
         {
@@ -62,9 +68,18 @@ public static class ProcessRunner
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
+            StandardOutputEncoding = enc,
+            StandardErrorEncoding = enc,
         };
+        // 仅为本次调用注入环境变量（如 Ghidra 需要 JAVA_HOME 指向 JDK 21，
+        // 而用户机器上 JAVA_HOME 可能是 11）—— 不改用户环境，只覆盖子进程。
+        if (extraEnvironment is not null)
+        {
+            foreach (var (k, v) in extraEnvironment)
+            {
+                if (!string.IsNullOrWhiteSpace(k)) psi.Environment[k] = v;
+            }
+        }
         if (!string.IsNullOrWhiteSpace(workingDirectory) && Directory.Exists(workingDirectory))
             psi.WorkingDirectory = workingDirectory;
 

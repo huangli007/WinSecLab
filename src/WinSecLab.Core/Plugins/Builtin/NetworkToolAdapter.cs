@@ -297,8 +297,11 @@ public sealed class DependenciesToolAdapter : ExternalToolAdapterBase
         var log = new List<string>();
         var exe = location.ExecutablePath!;
 
-        var result = await ProcessRunner.RunAsync(exe, $"-chain -modules {ProcessRunner.Quote(context.TargetPath)}",
-            dir, 120_000, context.CancellationToken, log.Add).ConfigureAwait(false);
+        // 用 -imports（而非 -chain -modules）：后者会递归解析整棵依赖树，实测跑不完，
+        // 且"批量枚举系统二进制"的行为会被安全软件直接掐掉。
+        // 加 -json 拿结构化输出 —— 文本模式在中文路径下会出现编码错乱。
+        var result = await ProcessRunner.RunAsync(exe, $"-imports -json {ProcessRunner.Quote(context.TargetPath)}",
+            dir, 60_000, context.CancellationToken, log.Add).ConfigureAwait(false);
 
         var artifacts = new List<string>();
         var rawFile = ToolArtifact.WriteText(dir, "dependencies-output.txt", result.Combined);
@@ -308,9 +311,9 @@ public sealed class DependenciesToolAdapter : ExternalToolAdapterBase
             return PluginRunResult.Fail($"Dependencies 启动失败：{result.StdErr}");
 
         if (result.TimedOut)
-            return PluginRunResult.Fail("Dependencies 执行超时（120s），未取得结果。");
+            return PluginRunResult.Fail("Dependencies 执行超时（60s），未取得结果。");
 
-        var toolModules = ParseModuleLines(result.StdOut);
+        var toolModules = ParseImportsOutput(result.StdOut);
 
         // 与内置解析结果对照：内置漏掉而工具找到的，往往是隐式加载（DelayLoad / 动态 LoadLibrary）
         var ours = context.Result.Dependencies
@@ -323,7 +326,7 @@ public sealed class DependenciesToolAdapter : ExternalToolAdapterBase
 
         var evidence = new List<Evidence>
         {
-            ToolEvidence(context, "dependencies", "依赖链交叉验证（Dependencies.exe）",
+            ToolEvidence(context, "dependencies", "导入表交叉验证（Dependencies.exe）",
                 $"工具识别 {toolModules.Count} 个模块，内置解析 {ours.Count} 个模块；"
                 + $"工具独有 {toolOnly.Count} 个，内置独有 {oursOnly.Count} 个",
                 new
@@ -353,19 +356,78 @@ public sealed class DependenciesToolAdapter : ExternalToolAdapterBase
         return run;
     }
 
-    /// <summary>Dependencies 文本输出中形如 "    C:\path\to\foo.dll" 的行。</summary>
+    /// <summary>
+    /// 解析 Dependencies 的 <c>-imports</c> 输出。优先走 JSON（结构化、无编码问题），
+    /// JSON 解析失败则回退到文本格式 —— 别人的工具升级会改格式，两级兜底更扛造。
+    /// </summary>
+    internal static List<string> ParseImportsOutput(string output)
+    {
+        var fromJson = TryParseImportsJson(output);
+        return fromJson.Count > 0 ? fromJson : ParseModuleLines(output);
+    }
+
+    /// <summary>解析 `-imports -json` 的 {"Imports":[{"Name":"GDI32.dll",...}]} 结构。</summary>
+    private static List<string> TryParseImportsJson(string output)
+    {
+        try
+        {
+            var start = output.IndexOf('{');
+            if (start < 0) return new List<string>();
+            var end = output.LastIndexOf('}');
+            if (end <= start) return new List<string>();
+
+            using var doc = System.Text.Json.JsonDocument.Parse(output[start..(end + 1)]);
+            if (!doc.RootElement.TryGetProperty("Imports", out var imports)
+                || imports.ValueKind != System.Text.Json.JsonValueKind.Array)
+                return new List<string>();
+
+            var names = new List<string>();
+            foreach (var item in imports.EnumerateArray())
+            {
+                if (item.TryGetProperty("Name", out var name)
+                    && name.GetString() is { Length: > 0 } s)
+                    names.Add(s);
+            }
+            return names.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    /// <summary>
+    /// 解析 Dependencies 的**文本**模块列表（JSON 不可用时的回退路径），兼容两种格式：
+    ///  · <c>-imports</c>：<c>Import from module GDI32.dll :</c>
+    ///  · <c>-chain -modules</c>：形如 <c>    C:\path\to\foo.dll</c> 的路径行
+    /// </summary>
     internal static List<string> ParseModuleLines(string output)
     {
         var modules = new List<string>();
+        const string importMarker = "Import from module";
+
         foreach (var raw in output.Split('\n'))
         {
             var line = raw.Trim();
             if (line.Length < 4) continue;
-            // 只认可执行模块路径
+
+            // 格式一：Import from module <名字> :
+            if (line.StartsWith(importMarker, StringComparison.OrdinalIgnoreCase))
+            {
+                var name = line[importMarker.Length..].Trim().TrimEnd(':').Trim();
+                if (name.Length > 0) modules.Add(name);
+                continue;
+            }
+
+            // 格式二：模块路径行。要求形如 "X:\..." 或 "\\server\..." 的绝对路径 ——
+            // 否则 "[-] Import listing for file : C:/tmp/target.exe" 这类标题行会被误收。
             if (!(line.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
                   || line.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
                   || line.EndsWith(".sys", StringComparison.OrdinalIgnoreCase)
                   || line.EndsWith(".ocx", StringComparison.OrdinalIgnoreCase))) continue;
+            var looksLikePath = (line.Length > 2 && line[1] == ':' && (line[2] == '\\' || line[2] == '/'))
+                                || line.StartsWith(@"\\", StringComparison.Ordinal);
+            if (!looksLikePath) continue;
             if (line.Contains("://", StringComparison.Ordinal)) continue;
             modules.Add(line);
         }
@@ -389,9 +451,14 @@ public sealed class SigcheckToolAdapter : ExternalToolAdapterBase
         var csv = Path.Combine(dir, "sigcheck.csv");
         ToolArtifact.TryDelete(csv);
 
+        // -accepteula 必须带：Sysinternals 工具首次运行会先打印 EULA 授权页，
+        // 不仅污染输出，还会让 CSV 头的 Verified 列解析不到（实测踩过）。
+        // outputEncoding=Unicode：sigcheck 的输出是 UTF-16LE（实测 CSV 头是 "P\0a\0t\0h\0"），
+        // 按 UTF-8 读会得到字符间夹 NUL 的乱码，导致 ParseSigcheckCsv 完全失效。
         var result = await ProcessRunner.RunAsync(exe,
-            $"-a -h -nobanner -c {ProcessRunner.Quote(context.TargetPath)}",
-            dir, 120_000, context.CancellationToken, log.Add).ConfigureAwait(false);
+            $"-accepteula -a -h -nobanner -c {ProcessRunner.Quote(context.TargetPath)}",
+            dir, 120_000, context.CancellationToken, log.Add,
+            outputEncoding: Encoding.Unicode).ConfigureAwait(false);
 
         var artifacts = new List<string>();
         if (File.Exists(csv)) artifacts.Add(csv);
@@ -405,7 +472,7 @@ public sealed class SigcheckToolAdapter : ExternalToolAdapterBase
         // Sigcheck 会把 CSV 同时打印到 stdout 和文件，优先用 stdout（避免文件写入被拦）
         var csvText = result.StdOut.Contains("Verified", StringComparison.OrdinalIgnoreCase)
             ? result.StdOut
-            : File.Exists(csv) ? File.ReadAllText(csv) : "";
+            : File.Exists(csv) ? ReadSigcheckCsvFile(csv) : "";
 
         if (csvText.Length == 0)
             return PluginRunResult.Fail($"Sigcheck 未返回可解析输出（退出码 {result.ExitCode}）：{FirstLines(result.StdErr, 3)}");
@@ -463,6 +530,39 @@ public sealed class SigcheckToolAdapter : ExternalToolAdapterBase
         public string? FileVersion { get; set; }
     }
 
+    /// <summary>
+    /// 读 sigcheck 写出的 CSV 文件，自动识别编码。
+    /// sigcheck 在中文 Windows 上默认吐 UTF-16LE（无 BOM），按 UTF-8 读会是乱码，
+    /// 所以先看 BOM，没有 BOM 则靠"NUL 字节占比"判断是不是 UTF-16。
+    /// </summary>
+    private static string ReadSigcheckCsvFile(string path)
+    {
+        try
+        {
+            var bytes = File.ReadAllBytes(path);
+            if (bytes.Length == 0) return "";
+
+            // BOM 优先
+            if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+                return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+                return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+
+            // 无 BOM：偶数字节大量为 0 → 几乎可以断定是 UTF-16LE
+            var sample = Math.Min(bytes.Length, 512);
+            var zeros = 0;
+            for (var i = 1; i < sample; i += 2) if (bytes[i] == 0) zeros++;
+            if (sample >= 2 && zeros > sample / 4)
+                return Encoding.Unicode.GetString(bytes);
+
+            return Encoding.UTF8.GetString(bytes);
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
     internal static SigcheckRow? ParseSigcheckCsv(string csvText)
     {
         // 注意：只去掉换行，绝不能把 '"' 也剥掉 —— 引号是 CSV 语法的一部分，
@@ -499,6 +599,9 @@ public sealed class SigcheckToolAdapter : ExternalToolAdapterBase
         };
     }
 
+    /// <summary>测试入口：验证编码自识别的文件读取。</summary>
+    internal static string ReadSigcheckCsvForTest(string path) => ReadSigcheckCsvFile(path);
+
     private static string FirstLines(string text, int count) =>
         string.Join(" / ", text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(l => l.Trim()).Where(l => l.Length > 0).Take(count));
@@ -518,8 +621,10 @@ public sealed class StringsToolAdapter : ExternalToolAdapterBase
         var log = new List<string>();
         var minLen = Math.Max(4, context.Options.StringMinLength);
 
+        // -accepteula：跳过首次运行的 EULA 页；-nobanner：去掉 "Strings v2.54 ..." 横幅。
+        // 少这两个开关，横幅会被当成一条提取到的字符串混进结果，污染召回率统计。
         var result = await ProcessRunner.RunAsync(location.ExecutablePath!,
-            $"-accepteula -n {minLen} -q {ProcessRunner.Quote(context.TargetPath)}",
+            $"-accepteula -nobanner -n {minLen} -q {ProcessRunner.Quote(context.TargetPath)}",
             dir, 180_000, context.CancellationToken, log.Add).ConfigureAwait(false);
 
         if (!result.Started)

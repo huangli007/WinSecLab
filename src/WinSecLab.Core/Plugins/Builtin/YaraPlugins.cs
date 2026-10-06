@@ -264,40 +264,19 @@ public sealed class BuiltinYaraPlugin : IWinSecLabPlugin
 /// <summary>
 /// YARA 适配器（§17 ExternalToolAdapter）。检测到 yara.exe 时用完整引擎重跑一遍内置规则 + 用户规则，
 /// 让"自研规则集"在真正的 YARA 语义下再验证一次；未安装时明确跳过（而不是假装做过）。
+///
+/// 注意它必须继承 <see cref="ExternalToolAdapterBase"/>：编排层靠
+/// <c>p is ExternalToolAdapterBase a &amp;&amp; a.Descriptor.Role == Substitutive</c> 判断
+/// "该不该让外部工具接管内置引擎"。早先这里是裸实现 IWinSecLabPlugin，
+/// 结果 YARA 装上了也不会被当成替代型 —— 白装。
 /// </summary>
-public sealed class YaraToolAdapter : IWinSecLabPlugin
+public sealed class YaraToolAdapter : ExternalToolAdapterBase
 {
-    public string Id => "yara";
-    public string Name => "YARA (外部引擎)";
-    public string Version => "1.0";
-    public string? Description => "调用 yara64.exe 执行规则匹配，输出与内置引擎可对照。未安装时自动跳过并由内置引擎兜底。";
-    public PluginKind Kind => PluginKind.ExternalToolAdapter;
-    public IReadOnlyList<TestTaskKind> Capabilities { get; } = new[] { TestTaskKind.YaraScan };
-    public bool RequiresDynamicSession => false;
-    public bool RequiresAdministrator => false;
+    protected override string ToolId => "yara";
 
-    private ExternalToolDescriptor Descriptor => ExternalToolCatalog.Get("yara")!;
-
-    public PluginProbeResult Detect()
+    protected override async Task<PluginRunResult> RunAsync(PluginContext context, ToolLocation loc)
     {
-        var loc = ExternalToolLocator.Locate(Descriptor);
-        if (!loc.Found)
-            return PluginProbeResult.Missing(
-                $"未检测到 yara.exe（已搜索：{string.Join("、", loc.Searched.Take(6))}）—— 将使用内置轻量引擎",
-                Descriptor.InstallHint);
-
-        return PluginProbeResult.Ready(
-            $"已检测到 YARA（{loc.Source}），版本信息：{loc.Version ?? "未知"}", loc.ExecutablePath, loc.Version);
-    }
-
-    public async Task<PluginRunResult> AnalyzeAsync(PluginContext context)
-    {
-        var loc = ExternalToolLocator.Locate(Descriptor);
-        if (!loc.Found || loc.ExecutablePath is null)
-        {
-            return PluginRunResult.Skipped(
-                $"未检测到 yara.exe，已跳过外部 YARA 引擎（内置引擎已给出结论）。安装方式：{Descriptor.InstallHint}");
-        }
+        var exe = loc.ExecutablePath!;
 
         // 规则目录：内置规则导出到 artifacts 下，用户规则目录若存在则一并纳入
         var rulesDir = Path.Combine(context.Layout.Artifacts, "yara", "external");
@@ -332,7 +311,7 @@ public sealed class YaraToolAdapter : IWinSecLabPlugin
         ruleFiles = ruleFiles.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         var log = new List<string>();
-        log.Add($"外部 YARA：{loc.ExecutablePath}（{loc.Source}）");
+        log.Add($"外部 YARA：{exe}（{loc.Source}）");
         log.Add($"规则文件 {ruleFiles.Count} 个");
 
         var matches = new List<YaraMatch>();
@@ -349,7 +328,7 @@ public sealed class YaraToolAdapter : IWinSecLabPlugin
 
             var args = BuildArguments(ruleFiles, target);
             var result = await ProcessRunner.RunAsync(
-                loc.ExecutablePath, args, Path.GetDirectoryName(target),
+                exe, args, Path.GetDirectoryName(target),
                 timeoutMs: 90_000, cancellationToken: context.CancellationToken, log: log.Add)
                 .ConfigureAwait(false);
 
@@ -402,7 +381,7 @@ public sealed class YaraToolAdapter : IWinSecLabPlugin
                     : $"yara.exe 命中 {matches.Count} 次，覆盖 {matches.Select(m => m.RuleName).Distinct().Count()} 条规则。",
                 new
                 {
-                    enginePath = loc.ExecutablePath,
+                    enginePath = exe,
                     engineSource = loc.Source,
                     engineVersion = loc.Version,
                     ruleFileCount = ruleFiles.Count,
@@ -427,10 +406,6 @@ public sealed class YaraToolAdapter : IWinSecLabPlugin
         foreach (var l in log) run.Log.Add(l);
         return run;
     }
-
-    public void Stop() { }
-
-    public IReadOnlyList<string> Export(PluginContext context) => Array.Empty<string>();
 
     private static string BuildArguments(List<string> ruleFiles, string target)
     {

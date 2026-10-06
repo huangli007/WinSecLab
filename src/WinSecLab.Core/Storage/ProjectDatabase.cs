@@ -93,9 +93,11 @@ public sealed class ProjectDatabase
         CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, format TEXT, path TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS artifacts (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, kind TEXT, name TEXT, path TEXT, size INTEGER, created_at TEXT);
         CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, author TEXT, body TEXT);
+        CREATE TABLE IF NOT EXISTS snapshots (id TEXT PRIMARY KEY, captured_at TEXT, session_id TEXT, json TEXT NOT NULL);
 
         CREATE INDEX IF NOT EXISTS ix_evidence_kind ON evidence(kind);
         CREATE INDEX IF NOT EXISTS ix_events_session ON events(session_id, timestamp);
+        CREATE INDEX IF NOT EXISTS ix_snapshots_time ON snapshots(captured_at);
         CREATE INDEX IF NOT EXISTS ix_events_type ON events(type);
         CREATE INDEX IF NOT EXISTS ix_events_pid ON events(pid);
         CREATE INDEX IF NOT EXISTS ix_findings_sev ON findings(severity);
@@ -219,10 +221,59 @@ public sealed class ProjectDatabase
         return list;
     }
 
+    // ------------------------------------------------------- snapshots（回归对比）
+
+    public void SaveSnapshot(AnalysisSnapshot snapshot)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO snapshots(id,captured_at,session_id,json) VALUES($id,$t,$s,$json)
+            ON CONFLICT(id) DO UPDATE SET json=$json;
+            """;
+        cmd.Parameters.AddWithValue("$id", snapshot.Id);
+        cmd.Parameters.AddWithValue("$t", snapshot.CapturedAt.ToString("O"));
+        cmd.Parameters.AddWithValue("$s", (object?)snapshot.SessionId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$json", WslJson.Serialize(snapshot));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>按时间倒序取快照（最新在前）。</summary>
+    public List<AnalysisSnapshot> GetSnapshots(int limit = 100)
+    {
+        var list = new List<AnalysisSnapshot>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT json FROM snapshots ORDER BY captured_at DESC LIMIT $n;";
+        cmd.Parameters.AddWithValue("$n", limit);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var s = WslJson.Deserialize<AnalysisSnapshot>(reader.GetString(0));
+            if (s is not null) list.Add(s);
+        }
+        return list;
+    }
+
+    public AnalysisSnapshot? GetLatestSnapshot() => GetSnapshots(1).FirstOrDefault();
+
+    /// <summary>
+    /// 取"上一轮"快照：排除本轮（<paramref name="excludeId"/>），返回时间上最近的一份。
+    /// 对比时用得到 —— 刚存完本轮快照，要拿的是它之前的那份。
+    /// </summary>
+    public AnalysisSnapshot? GetPreviousSnapshot(string? excludeId)
+    {
+        foreach (var s in GetSnapshots(50))
+        {
+            if (excludeId is null || !string.Equals(s.Id, excludeId, StringComparison.Ordinal))
+                return s;
+        }
+        return null;
+    }
+
     // ------------------------------------------------------------- static
 
-    public void SavePeImage(PeImageInfo pe)
-    {
+    public void SavePeImage(PeImageInfo pe)    {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -797,6 +848,20 @@ public sealed class ProjectDatabase
         if (f is null) return;
         f.Status = status;
         SaveFindings(new[] { f });
+    }
+
+    /// <summary>
+    /// 人工复核闭环（§9 人工深入分析）：一次性写回处理状态与复核意见。
+    /// 单独拆开是为了让 UI 的「保存复核」只做一次读改写，避免状态与备注分两次落库出现中间态。
+    /// </summary>
+    public bool UpdateFindingReview(string id, FindingStatus status, string? analystNote)
+    {
+        var f = GetFindings().FirstOrDefault(x => x.Id == id);
+        if (f is null) return false;
+        f.Status = status;
+        f.AnalystNote = string.IsNullOrWhiteSpace(analystNote) ? null : analystNote.Trim();
+        SaveFindings(new[] { f });
+        return true;
     }
 
     public int NextFindingSerial()

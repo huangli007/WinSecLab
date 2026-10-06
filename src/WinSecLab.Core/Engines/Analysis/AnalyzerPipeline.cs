@@ -230,7 +230,36 @@ public sealed class AnalyzerPipeline
 
             // ══════════════════ ⑦ 落盘与报告 ══════════════════
             Progress(0.90, "保存证据与发现");
+
+            // 先把"上一轮快照"取出来（Persist 会写入本轮快照，之后再取就取到本轮了）
+            AnalysisSnapshot? baselineSnapshot = null;
+            try
+            {
+                baselineSnapshot = request.Database.GetLatestSnapshot();
+            }
+            catch (Exception ex)
+            {
+                Log($"读取历史快照失败（跳过对比）：{ex.Message}");
+            }
+
             Persist(request, result, report, Log, Warn);
+
+            // 与上次对比（回归测试）—— 有基线才做，第一轮就说明"无基线"
+            ComparisonResult? comparison = null;
+            try
+            {
+                var currentSnapshot = RunComparer.Capture(result, result.Events.FirstOrDefault()?.SessionId);
+                comparison = RunComparer.Compare(baselineSnapshot, currentSnapshot);
+                if (baselineSnapshot is not null)
+                {
+                    Log($"与上次对比：新增 {comparison.Added.Count} / 消失 {comparison.Removed.Count} "
+                        + $"/ 变化 {comparison.Changed.Count}（对比基线 {baselineSnapshot.CapturedAt:yyyy-MM-dd HH:mm}）");
+                }
+            }
+            catch (Exception ex)
+            {
+                Warn($"对比分析失败：{ex.Message}");
+            }
 
             if (request.GenerateReport && request.Options.AutoGenerateReport)
             {
@@ -248,6 +277,7 @@ public sealed class AnalyzerPipeline
                         DocumentId = request.Project.Id,
                         IncludeEvidenceAppendix = true,
                         IncludeSecurityGraph = true,
+                        Comparison = comparison,
                     });
 
                     report.ReportFiles.AddRange(reportResult.Files);
@@ -665,6 +695,14 @@ public sealed class AnalyzerPipeline
         }
 
         if (result.Findings.Count > 0) Try(() => db.SaveFindings(result.Findings), "安全发现");
+
+        // 存一份本轮快照，供下次分析做「与上次对比」（回归测试的核心诉求）
+        Try(() =>
+        {
+            var snapshot = RunComparer.Capture(result, result.Events.FirstOrDefault()?.SessionId);
+            db.SaveSnapshot(snapshot);
+            log($"已保存本轮快照 {snapshot.Id}（发现 {snapshot.TotalFindings} 项），下次分析可做对比。");
+        }, "分析快照");
 
         void Try(Action action, string what)
         {

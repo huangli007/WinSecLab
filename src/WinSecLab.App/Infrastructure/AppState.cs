@@ -532,6 +532,14 @@ public sealed class AppState : ObservableObject
 
         try
         {
+            // 报告要带「与上次对比」：先取基线快照再生成。
+            // 注意必须在本次会话快照落库之前取，否则基线会变成"自己"（对比恒为无变化）。
+            Core.Models.AnalysisSnapshot? baseline = null;
+            try { baseline = Database?.GetLatestSnapshot(); } catch { }
+            var current = Core.Engines.Analysis.RunComparer.Capture(
+                Result, Result.Events.FirstOrDefault()?.SessionId);
+            var comparison = Core.Engines.Analysis.RunComparer.Compare(baseline, current);
+
             var engine = new Core.Engines.Reports.ReportEngine();
             var report = engine.Generate(Result, new Core.Engines.Reports.ReportOptions
             {
@@ -541,6 +549,7 @@ public sealed class AppState : ObservableObject
                 DocumentId = CurrentProject.Id,
                 AnalystName = Settings.AnalystName,
                 Organization = Settings.Organization,
+                Comparison = comparison,
             });
 
             foreach (var f in report.Files) ReportFiles.Insert(0, f);
@@ -557,6 +566,99 @@ public sealed class AppState : ObservableObject
     /// 把发现清单导出为 CSV。给"拿去 Excel 做跟踪表"的场景 —— 报告是成品，CSV 是原料。
     /// 返回导出的文件路径（失败返回 null）。
     /// </summary>
+    /// <summary>
+    /// 人工复核闭环（§9 人工深入分析）：把某条发现的处理状态与复核意见写回数据库，
+    /// 并同步内存中的结果对象，保证界面、报告、CSV 三处口径一致。
+    /// </summary>
+    public bool SaveFindingReview(Finding finding, FindingStatus status, string? note)
+    {
+        if (Database is null) return false;
+        try
+        {
+            var ok = Database.UpdateFindingReview(finding.Id, status, note);
+            if (!ok)
+            {
+                AppendLog($"[复核] 未找到发现 {finding.Id}，可能已被重新分析覆盖。");
+                return false;
+            }
+
+            // 同步内存对象（同一引用），让列表与详情立即反映新状态
+            finding.Status = status;
+            finding.AnalystNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+
+            Raise(nameof(ReviewedCount));
+            Raise(nameof(PendingReviewCount));
+            AppendLog($"已更新复核：{finding.Id} → {finding.StatusText}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[复核] 保存失败：{ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>已人工复核（已确认 / 误报 / 接受风险 / 已整改）的发现数。</summary>
+    public int ReviewedCount => Result?.Findings.Count(f => f.Status != FindingStatus.Open) ?? 0;
+
+    /// <summary>仍待人工确认的发现数。</summary>
+    public int PendingReviewCount => Result?.Findings.Count(f => f.Status == FindingStatus.Open) ?? 0;
+
+    // ─────────────────────── 轮次对比（回归测试） ───────────────────────
+
+    /// <summary>
+    /// 列出该项目的历史快照（新的在前）。快照是每轮分析结束时落的结论指纹，
+    /// 用于「这一轮比上一轮多了什么」——发现项本身是按 ID 覆盖写入的，看不出变化。
+    /// </summary>
+    public List<Core.Models.AnalysisSnapshot> GetSnapshots()
+    {
+        if (Database is null) return new List<Core.Models.AnalysisSnapshot>();
+        try
+        {
+            return Database.GetSnapshots();
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[对比] 读取快照失败：{ex.Message}");
+            return new List<Core.Models.AnalysisSnapshot>();
+        }
+    }
+
+    /// <summary>
+    /// 计算「基准快照 → 当前一轮」的差异。两个参数都为 null 时表示自动取最新两轮。
+    /// 这是回归测试最核心的一问：改版之后，哪些问题变多了、哪些修掉了。
+    /// </summary>
+    public Core.Models.ComparisonResult? CompareRounds(
+        Core.Models.AnalysisSnapshot? baseline, Core.Models.AnalysisSnapshot? current)
+    {
+        try
+        {
+            if (baseline is null && current is null)
+            {
+                // 自动模式：最新一轮当"当前"，它前面那一轮当基线
+                var all = GetSnapshots();
+                if (all.Count == 0) return null;
+                current = all[0];
+                baseline = all.Count > 1 ? all[1] : null;
+            }
+
+            return Core.Engines.Analysis.RunComparer.Compare(baseline, current);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[对比] 计算失败：{ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>把对比结论写成一行简报（给首页/概览页用）。没有可比基线时返回 null。</summary>
+    public string? ComparisonHeadline()
+    {
+        var cmp = CompareRounds(null, null);
+        if (cmp is null || !cmp.HasBaseline) return null;
+        return cmp.Verdict;
+    }
+
     public string? ExportFindingsCsv()
     {
         if (Result is null || Layout is null || CurrentProject is null) return null;
@@ -592,6 +694,40 @@ public sealed class AppState : ObservableObject
         catch (Exception ex)
         {
             AppendLog($"[导出] 证据清单导出失败：{ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 把某份 HTML 报告打印成 PDF（走系统自带 Edge，零依赖）。
+    /// 返回 PDF 路径；失败返回 null 并把原因写进日志。
+    /// </summary>
+    public async Task<string?> ExportReportPdfAsync(string htmlPath)
+    {
+        if (string.IsNullOrWhiteSpace(htmlPath) || !File.Exists(htmlPath)) return null;
+
+        try
+        {
+            var pdfPath = Path.ChangeExtension(htmlPath, ".pdf");
+            AppendLog($"正在导出 PDF（Edge 无头打印）：{Path.GetFileName(htmlPath)}");
+
+            var result = await Core.Engines.Reports.PdfExporter
+                .ExportAsync(htmlPath, pdfPath)
+                .ConfigureAwait(true);
+
+            if (result.Success && result.Path is not null)
+            {
+                ReportFiles.Insert(0, result.Path);
+                AppendLog($"已导出 PDF：{Path.GetFileName(result.Path)}");
+                return result.Path;
+            }
+
+            AppendLog($"[导出] PDF 导出失败：{result.Error}");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[导出] PDF 导出异常：{ex.Message}");
             return null;
         }
     }

@@ -8,6 +8,9 @@ namespace WinSecLab.App;
 public partial class MainWindow : Window
 {
     private readonly AppState _state = new();
+
+    /// <summary>供快照模式读取状态（只读）。</summary>
+    public AppState State => _state;
     private readonly Dictionary<string, UserControl> _views = new();
 
     public MainWindow()
@@ -67,6 +70,7 @@ public partial class MainWindow : Window
         "Evidence" => new EvidenceView(_state),
         "Dynamic" => new DynamicView(_state),
         "Graph" => new GraphView(_state),
+        "Comparison" => new ComparisonView(_state),
         "Reports" => new ReportsView(_state),
         "Plugins" => new PluginsView(_state),
         "Settings" => new SettingsView(_state),

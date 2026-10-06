@@ -29,7 +29,8 @@ internal static class UiSnapshot
         return null;
     }
 
-    public static async Task CaptureAllAsync(MainWindow window, string outputDirectory, double width, double height)
+    public static async Task CaptureAllAsync(
+        MainWindow window, Infrastructure.AppState state, string outputDirectory, double width, double height)
     {
         Directory.CreateDirectory(outputDirectory);
 
@@ -54,9 +55,10 @@ internal static class UiSnapshot
             ("Evidence", "05-evidence.png"),
             ("Dynamic", "06-dynamic.png"),
             ("Graph", "07-graph.png"),
-            ("Reports", "08-reports.png"),
-            ("Plugins", "09-plugins.png"),
-            ("Settings", "10-settings.png"),
+            ("Comparison", "08-comparison.png"),
+            ("Reports", "09-reports.png"),
+            ("Plugins", "10-plugins.png"),
+            ("Settings", "11-settings.png"),
         };
 
         foreach (var (tag, file) in pages)
@@ -64,6 +66,7 @@ internal static class UiSnapshot
             window.NavigateTo(tag);
             await SettleAsync(window, 3);
             Save(window, Path.Combine(outputDirectory, file));
+            if (tag == "Plugins") DumpPluginDiagnostics(state);
         }
 
         window.Close();
@@ -76,6 +79,28 @@ internal static class UiSnapshot
             window.UpdateLayout();
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
             await Task.Delay(90);
+        }
+    }
+
+    /// <summary>
+    /// 快照期插件探测诊断（仅 --snapshot 模式）。截图只能看到"22/23"这种结果，
+    /// 看不到是哪一个失败，这里把明细打到标准输出，便于定位。
+    /// </summary>
+    private static void DumpPluginDiagnostics(Infrastructure.AppState state)
+    {
+        try
+        {
+            var total = state.Plugins.Count;
+            var avail = state.Plugins.Count(p => p.Available);
+            var ext = state.Plugins.Count(p => p.Kind == Core.Models.PluginKind.ExternalToolAdapter);
+            var extAvail = state.Plugins.Count(p => p.Kind == Core.Models.PluginKind.ExternalToolAdapter && p.Available);
+            Console.WriteLine($"[snapshot] 插件：共 {total}，可用 {avail}；外部工具 {extAvail}/{ext}");
+            foreach (var p in state.Plugins.Where(p => !p.Available))
+                Console.WriteLine($"[snapshot]   不可用 → {p.Id}：{p.AvailabilityText}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[snapshot] 插件诊断失败：{ex.Message}");
         }
     }
 

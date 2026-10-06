@@ -59,6 +59,7 @@
                     <ListBoxItem Content="证据库" Tag="Evidence" />
                     <ListBoxItem Content="动态行为" Tag="Dynamic" />
                     <ListBoxItem Content="安全图谱" Tag="Graph" />
+                    <ListBoxItem Content="轮次对比" Tag="Comparison" />
                     <ListBoxItem Content="报告" Tag="Reports" />
                     <ListBoxItem Content="插件与工具" Tag="Plugins" />
                     <ListBoxItem Content="设置" Tag="Settings" />

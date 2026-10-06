@@ -40,7 +40,7 @@ public partial class App : Application
                 try
                 {
                     if (MainWindow is MainWindow window)
-                        await UiSnapshot.CaptureAllAsync(window, snapshotDir, width, height);
+                        await UiSnapshot.CaptureAllAsync(window, window.State, snapshotDir, width, height);
                 }
                 catch (Exception ex)
                 {

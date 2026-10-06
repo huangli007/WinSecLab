@@ -128,8 +128,10 @@ public class CsvExportTests : IDisposable
         var header = File.ReadAllLines(path)[0];
 
         // 列数稳定很重要 —— 下游若有脚本按列位置取值，改列序会静默算错
-        Assert.Equal(14, header.Split(',').Length);
+        // 15 列 = 原有 14 列 + 末尾新增的「人工复核意见」（复核闭环）
+        Assert.Equal(15, header.Split(',').Length);
         Assert.StartsWith("序号,严重级别,标题", header);
+        Assert.EndsWith("人工复核意见,发现时间", header);
     }
 
     [Fact]

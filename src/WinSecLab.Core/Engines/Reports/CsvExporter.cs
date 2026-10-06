@@ -20,7 +20,7 @@ public static class CsvExporter
     {
         var sb = new StringBuilder();
 
-        sb.AppendLine("序号,严重级别,标题,类别,规则编号,CWE,OWASP,置信度,状态,影响目标,关联证据数,影响说明,整改建议,发现时间");
+        sb.AppendLine("序号,严重级别,标题,类别,规则编号,CWE,OWASP,置信度,状态,影响目标,关联证据数,影响说明,整改建议,人工复核意见,发现时间");
 
         var index = 1;
         // 严重级别高的排前面 —— 打开 Excel 第一眼就该看到最该处理的
@@ -41,6 +41,7 @@ public static class CsvExporter
             sb.Append(f.EvidenceIds.Count).Append(',');
             sb.Append(Escape(f.Impact ?? "")).Append(',');
             sb.Append(Escape(f.Recommendation ?? "")).Append(',');
+            sb.Append(Escape(f.AnalystNote ?? "")).Append(',');
             sb.Append(Escape(f.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")));
             sb.AppendLine();
         }

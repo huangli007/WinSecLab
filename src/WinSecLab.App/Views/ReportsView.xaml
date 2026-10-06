@@ -57,7 +57,7 @@
                 <StackPanel Margin="0,2,0,0">
                     <TextBlock Text="HTML" Style="{StaticResource T.Label}" />
                     <TextBlock Style="{StaticResource T.Body}" Margin="0,0,0,10"
-                               Text="自包含单文件（样式内联），双击即可用浏览器打开；用浏览器「打印 → 另存为 PDF」即可得到 PDF 报告。" />
+                               Text="自包含单文件（样式内联），双击即可用浏览器打开；选中后点「导出 PDF」可直接得到 PDF 报告。" />
 
                     <TextBlock Text="Markdown" Style="{StaticResource T.Label}" />
                     <TextBlock Style="{StaticResource T.Body}" Margin="0,0,0,10"
@@ -72,7 +72,7 @@
 
                 <TextBlock Text="报告章节" Style="{StaticResource T.Label}" />
                 <TextBlock Style="{StaticResource T.Body}" Margin="0,0,0,14" TextWrapping="Wrap"
-                           Text="执行摘要 · 应用信息 · 测试环境 · 静态分析 · 动态行为 · 网络分析 · 文件系统 · 注册表 · 依赖关系 · 安全发现 · 证据附录 · 安全图谱 · 附录与方法" />
+                           Text="执行摘要 · 程序信息 · 测试环境 · 静态分析 · 运行期观测 · 依赖分析 · 安全发现 · 证据链 · 风险整改 · 附录" />
 
                 <ItemsControl x:Name="SelectedActions">
                     <ItemsControl.ItemTemplate>
@@ -84,6 +84,10 @@
                                         Click="OpenFile_OnClick" />
                                 <Button Content="定位" Style="{StaticResource Btn.Ghost}" Tag="{Binding Path}"
                                         Click="RevealFile_OnClick" />
+                                <Button Content="导出 PDF" Style="{StaticResource Btn.Ghost}" Tag="{Binding Path}"
+                                        Click="ExportPdf_OnClick"
+                                        Visibility="{Binding CanExportPdf, Converter={StaticResource BoolVis}}"
+                                        ToolTip="用系统自带 Edge 无头打印成 PDF（零依赖）" />
                             </StackPanel>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>

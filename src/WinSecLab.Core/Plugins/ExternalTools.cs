@@ -49,6 +49,23 @@ public sealed class ExternalToolDescriptor
     /// <summary>输出版本号的命令行参数。</summary>
     public string VersionArgument { get; init; } = "--version";
 
+    /// <summary>
+    /// 版本探测是否要先加 <c>-accepteula</c>。
+    ///
+    /// Sysinternals 系工具第一次运行会先弹授权页（EULA），授权文本会被当成"版本号"显示出来。
+    /// 加 -accepteula 后才会直接输出真正的版本行；纯 GUI 工具（Process Explorer）则完全
+    /// 不该起进程，见 <see cref="AlwaysProbeFromFileResource"/>。
+    /// </summary>
+    public bool AcceptEulaForVersion { get; init; }
+
+    /// <summary>
+    /// 强制只用 PE 文件版本资源探测，绝不启动进程。
+    ///
+    /// 用于纯 GUI 程序（如 Process Explorer）：<c>/?</c> 不会打印到控制台，而是弹一个窗口，
+    /// 既拿不到版本号又会被安全软件当成异常行为拦截。读文件版本资源零副作用、毫秒级返回。
+    /// </summary>
+    public bool AlwaysProbeFromFileResource { get; init; }
+
     /// <summary>本工具能增强哪些测试任务。</summary>
     public required TestTaskKind[] Capabilities { get; init; }
 
@@ -130,7 +147,9 @@ public static class ExternalToolCatalog
                 @"%ProgramFiles%\Process Monitor", @"C:\Sysinternals",
             },
             RegistryAppPaths = new[] { @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Procmon64.exe" },
+            // GUI 程序：/? 弹的是窗口而不是控制台输出，且会被安全软件拦。只读文件版本资源。
             VersionArgument = "/?",
+            AlwaysProbeFromFileResource = true,
             Capabilities = new[] { TestTaskKind.ProcessMonitor, TestTaskKind.FileMonitor, TestTaskKind.RegistryMonitor },
             RequiresAdministrator = true,
             InstallHint = "下载 Sysinternals Process Monitor（live.sysinternals.com/Procmon64.exe）放到 C:\\Tools\\Procmon。",
@@ -144,7 +163,7 @@ public static class ExternalToolCatalog
             Name = "Ghidra",
             Category = "Analysis",
             ExecutableNames = new[] { "analyzeHeadless.bat", "ghidraRun.bat" },
-            ProbeDirectories = new[] { @"C:\Tools\ghidra", @"C:\ghidra", @"%ProgramFiles%\Ghidra" },
+            ProbeDirectories = new[] { @"C:\Tools\ghidra", @"C:\Tools\ghidra\support", @"C:\ghidra", @"C:\ghidra\support", @"%ProgramFiles%\Ghidra" },
             ProbeGlobs = new[] { @"C:\Tools\ghidra_*", @"C:\ghidra_*", @"%USERPROFILE%\ghidra_*" },
             VersionArgument = "help",
             Capabilities = new[] { TestTaskKind.DeepAnalysis },
@@ -175,7 +194,7 @@ public static class ExternalToolCatalog
             Name = "x64dbg",
             Category = "Analysis",
             ExecutableNames = new[] { "x64dbg.exe", "x32dbg.exe" },
-            ProbeDirectories = new[] { @"C:\Tools\x64dbg", @"C:\x64dbg", @"%ProgramFiles%\x64dbg" },
+            ProbeDirectories = new[] { @"C:\Tools\x64dbg", @"C:\Tools\x64dbg\x64", @"C:\Tools\x64dbg\release\x64", @"C:\x64dbg", @"%ProgramFiles%\x64dbg" },
             ProbeGlobs = new[] { @"C:\Tools\x64dbg*", @"%USERPROFILE%\Downloads\x64dbg*" },
             VersionArgument = "--help",
             Capabilities = new[] { TestTaskKind.DeepAnalysis },
@@ -197,7 +216,7 @@ public static class ExternalToolCatalog
             InstallHint = "下载 Dependencies_x64_Release.zip（github.com/lucasg/Dependencies）解压到 C:\\Tools\\Dependencies。",
             Homepage = "https://github.com/lucasg/Dependencies",
             Author = "lucasg",
-            InvocationHint = "Dependencies.exe -chain -modules <目标> 输出依赖链，与内置解析结果交叉验证。",
+            InvocationHint = "Dependencies.exe -imports <目标> 输出直接导入表，与内置解析结果交叉验证。",
         },
         new()
         {
@@ -206,7 +225,9 @@ public static class ExternalToolCatalog
             Category = "Dynamic",
             ExecutableNames = new[] { "procexp64.exe", "procexp.exe" },
             ProbeDirectories = new[] { @"C:\Tools\Sysinternals", @"C:\Sysinternals", @"%ProgramFiles%\Sysinternals" },
+            // GUI 程序：/? 弹窗口而非输出文本 —— 只读文件版本资源，避免版本号显示成 EULA 标题。
             VersionArgument = "/?",
+            AlwaysProbeFromFileResource = true,
             Capabilities = new[] { TestTaskKind.DeepAnalysis },
             RequiresAdministrator = true,
             InstallHint = "下载 Sysinternals Process Explorer 到 C:\\Tools\\Sysinternals。",
@@ -222,6 +243,8 @@ public static class ExternalToolCatalog
             ExecutableNames = new[] { "sigcheck64.exe", "sigcheck.exe" },
             ProbeDirectories = new[] { @"C:\Tools\Sysinternals", @"C:\Sysinternals", @"%ProgramFiles%\Sysinternals" },
             VersionArgument = "/?",
+            // 控制台程序，但输出是 UTF-16LE 且首次运行先弹 EULA 页 —— 加 -accepteula。
+            AcceptEulaForVersion = true,
             Capabilities = new[] { TestTaskKind.DigitalSignature },
             InstallHint = "下载 Sysinternals Sigcheck 到 C:\\Tools\\Sysinternals。",
             Homepage = "https://learn.microsoft.com/sysinternals/downloads/sigcheck",
@@ -236,6 +259,8 @@ public static class ExternalToolCatalog
             ExecutableNames = new[] { "strings64.exe", "strings.exe" },
             ProbeDirectories = new[] { @"C:\Tools\Sysinternals", @"C:\Sysinternals", @"%ProgramFiles%\Sysinternals" },
             VersionArgument = "/?",
+            // 控制台程序，但首次运行先弹 EULA 页 —— 加 -accepteula。
+            AcceptEulaForVersion = true,
             Capabilities = new[] { TestTaskKind.StringsScan },
             InstallHint = "下载 Sysinternals Strings 到 C:\\Tools\\Sysinternals。",
             Homepage = "https://learn.microsoft.com/sysinternals/downloads/strings",
@@ -394,12 +419,19 @@ public static class ExternalToolLocator
             ExecutablePath = found,
             Source = source,
             Searched = searched,
-            Version = found is not null && probeVersion ? ProbeVersion(found, descriptor.VersionArgument) : null,
+            Version = found is not null && probeVersion ? ProbeVersion(descriptor, found) : null,
         };
 
         return location;
     }
 
+    /// <summary>
+    /// 在目录内找可执行文件：先看直接子文件，再看一级子目录。
+    ///
+    /// 为什么要下一级：解压式发行版（x64dbg、Ghidra 等）普遍把主程序放在
+    /// release\x64\ 或 bin\ 这类子目录里，只看直接子文件会全部漏判。
+    /// 刻意只递归一层 —— 深度够覆盖常见布局，又不会在大目录上把探测拖成秒级。
+    /// </summary>
     private static string? MatchInDirectory(string dir, string[] names)
     {
         foreach (var name in names)
@@ -415,6 +447,28 @@ public static class ExternalToolLocator
             }
             catch { }
         }
+
+        // 一级子目录（release\x64\、bin\ 之类）
+        try
+        {
+            foreach (var sub in Directory.EnumerateDirectories(dir))
+            {
+                foreach (var name in names)
+                {
+                    try
+                    {
+                        var p = Path.Combine(sub, name);
+                        if (File.Exists(p)) return p;
+                        var hit = Directory.EnumerateFiles(sub)
+                            .FirstOrDefault(f => string.Equals(Path.GetFileName(f), name, StringComparison.OrdinalIgnoreCase));
+                        if (hit is not null) return hit;
+                    }
+                    catch { }
+                }
+            }
+        }
+        catch { }
+
         return null;
     }
 
@@ -481,43 +535,218 @@ public static class ExternalToolLocator
     }
 
     /// <summary>跑一次 `exe &lt;arg&gt;` 抓版本号。失败一律返回 null，绝不让探测把分析流程拖住。</summary>
-    public static string? ProbeVersion(string exePath, string argument, int timeoutMs = 2500)
+    /// <summary>
+    /// 探测外部工具的版本号。三级策略，按"可信度 + 安全性"排序：
+    /// 1) PE 文件版本资源 —— 不启动进程，毫秒级，不受安全软件影响，且是发布者**主动声明**的版本
+    ///    （纯 GUI 工具的**唯一**可行路径）；
+    /// 2) 命令行 --version / /? —— 起子进程拿输出，但工具自身输出未必是版本号
+    ///    （实测 Dependencies 的 -help 首行是描述文本，会把正确的文件版本盖掉）；
+    /// 3) 文件名里的版本号 —— 兜底（x64dbg 快照、Ghidra 解压目录名常带版本）。
+    /// </summary>
+    public static string? ProbeVersion(ExternalToolDescriptor descriptor, string exePath, int timeoutMs = 2500)
+    {
+        // 1) 文件版本资源。GUI 工具（AlwaysProbeFromFileResource）到此为止 —— 起进程只会弹窗或被拦。
+        var fromFile = TryReadFileVersion(exePath);
+        if (descriptor.AlwaysProbeFromFileResource) return fromFile;
+
+        // 文件版本资源可用就直接采信：它是发布者填的版本，比解析工具输出可靠得多。
+        if (!string.IsNullOrWhiteSpace(fromFile) && LooksLikeVersion(fromFile)) return fromFile;
+
+        // 2) 命令行输出
+        var fromCli = ProbeVersionViaCli(exePath, descriptor, timeoutMs);
+
+        return fromCli ?? fromFile ?? TryParseVersionFromPath(exePath);
+    }
+
+    /// <summary>
+    /// 判断一段文本是否"像版本号"（形如 1.10.0 / 17.14 / 4.5.5.1234）。
+    /// 文件版本资源里的 Description 字段常被发布者塞进说明文字，这类要判为不可信。
+    /// </summary>
+    internal static bool LooksLikeVersion(string text)
+    {
+        var t = text.Trim();
+        if (t.Length == 0 || t.Length > 40) return false;
+        return System.Text.RegularExpressions.Regex.IsMatch(t, @"^\d+(\.\d+){0,3}$");
+    }
+
+    /// <summary>
+    /// 读取 PE 的版本资源（FileVersion / ProductVersion）。
+    /// 用 <see cref="FileVersionInfo"/> 即可，无需解析 PE 结构。这条路对任何 Win32 exe 都适用，
+    /// 且完全不起进程 —— 对会被安全软件拦的调试类工具尤其重要。
+    /// </summary>
+    private static string? TryReadFileVersion(string exePath)
     {
         try
         {
+            var info = FileVersionInfo.GetVersionInfo(exePath);
+            var v = info.ProductVersion?.Trim();
+            if (string.IsNullOrWhiteSpace(v)) v = info.FileVersion?.Trim();
+            if (string.IsNullOrWhiteSpace(v)) return null;
+            // 有些工具版本资源是 "1.0.0.0" 之外的杂乱串，限制长度并去掉换行
+            v = v.Replace("\r", " ").Replace("\n", " ").Trim();
+            if (v.Length == 0) return null;
+            // 文件名本身就叫版本（例如 "1.0"）或全是 0 的占位，视为无效
+            if (v.All(c => c == '0' || c == '.')) return null;
+            return v.Length > 120 ? v[..120] : v;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ProbeVersionViaCli(string exePath, ExternalToolDescriptor descriptor, int timeoutMs)
+    {
+        try
+        {
+            var arg = descriptor.VersionArgument;
+            if (descriptor.AcceptEulaForVersion)
+                arg = $"-accepteula {arg}".Trim();
+
+            // 不能固定用 UTF-8 或 Unicode 读：实测同一套 Sysinternals 工具编码并不一致
+            // （sigcheck 是 UTF-16LE，strings 是 UTF-8/ASCII）。这里按原始字节读回来自动嗅探。
             var psi = new ProcessStartInfo
             {
                 FileName = exePath,
-                Arguments = argument,
+                Arguments = arg,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
+                StandardOutputEncoding = Encoding.Latin1,  // 逐字节透传，不做替换
+                StandardErrorEncoding = Encoding.Latin1,
             };
             using var p = Process.Start(psi);
             if (p is null) return null;
 
-            var sb = new StringBuilder();
-            p.OutputDataReceived += (_, e) => { if (e.Data is not null && sb.Length < 4000) sb.AppendLine(e.Data); };
-            p.ErrorDataReceived += (_, e) => { if (e.Data is not null && sb.Length < 4000) sb.AppendLine(e.Data); };
-            p.BeginOutputReadLine();
-            p.BeginErrorReadLine();
+            // 同步读：走 OutputDataReceived 异步回调会踩时序坑 —— 带超时的 WaitForExit(ms)
+            // 不等异步缓冲排空，短命令（yara --version）经常在回调执行前就返回，字节数恒为 0。
+            // stdout / stderr 必须**并行**读：串行读 stdout 时若 stderr 缓冲写满，进程会阻塞等写入，
+            // 双方互等成死锁。
+            static List<byte> Drain(Stream stream)
+            {
+                var buf = new List<byte>(4096);
+                try
+                {
+                    var chunk = new byte[1024];
+                    int n;
+                    while (buf.Count < 8000 && (n = stream.Read(chunk, 0, chunk.Length)) > 0)
+                        buf.AddRange(chunk.AsSpan(0, n).ToArray());
+                }
+                catch { }
+                return buf;
+            }
 
-            if (!p.WaitForExit(timeoutMs))
+            var stdoutTask = Task.Run(() => Drain(p.StandardOutput.BaseStream));
+            var stderrTask = Task.Run(() => Drain(p.StandardError.BaseStream));
+
+            if (!Task.WaitAll(new Task[] { stdoutTask, stderrTask }, timeoutMs))
             {
                 try { p.Kill(entireProcessTree: true); } catch { }
                 return null;
             }
-            p.WaitForExit(500);
+            try { p.WaitForExit(500); } catch { }
 
-            var text = sb.ToString();
-            var line = text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Select(l => l.Trim())
-                .FirstOrDefault(l => l.Length > 0 && !l.StartsWith("Usage", StringComparison.OrdinalIgnoreCase)
-                                     && !l.StartsWith("用法", StringComparison.Ordinal));
-            if (string.IsNullOrWhiteSpace(line)) return null;
-            return line.Length > 200 ? line[..200] : line;
+            var bytes = stdoutTask.Result;
+            bytes.AddRange(stderrTask.Result);
+            return PickVersionLine(DecodeToolOutput(bytes.ToArray()));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 自动判断工具控制台输出是 UTF-16LE 还是 UTF-8。
+    ///
+    /// 为什么要嗅探：实测同一套 Sysinternals 工具编码并不统一 —— sigcheck 输出 UTF-16LE
+    /// （所以按 UTF-8 读会变成 "S i g c h e c k"），strings 却是 UTF-8。硬编码任何一种都会错。
+    /// 判据：UTF-16LE 的 ASCII 文本每隔一个字节就是 0x00；UTF-8 则是连续非零字节。
+    /// 同时处理 BOM。
+    /// </summary>
+    internal static string DecodeToolOutput(byte[] raw)
+    {
+        if (raw.Length == 0) return string.Empty;
+
+        // 显式 BOM
+        if (raw.Length >= 2 && raw[0] == 0xFF && raw[1] == 0xFE)
+            return Encoding.Unicode.GetString(raw, 2, raw.Length - 2);
+        if (raw.Length >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF)
+            return Encoding.UTF8.GetString(raw, 3, raw.Length - 3);
+
+        // 采样前 512 字节统计奇偶位为 0 的比例
+        var sample = Math.Min(raw.Length, 512);
+        int zerosOnOdd = 0, zerosOnEven = 0;
+        for (var i = 0; i < sample; i++)
+        {
+            if (raw[i] != 0) continue;
+            if ((i & 1) == 1) zerosOnOdd++; else zerosOnEven++;
+        }
+        var oddRatio = (double)zerosOnOdd / sample;
+        // UTF-16LE 的 ASCII 文本：奇数位约一半是 0x00
+        if (oddRatio > 0.25 && zerosOnOdd > zerosOnEven * 3)
+            return Encoding.Unicode.GetString(raw).TrimStart('\uFEFF', '\0');
+
+        // 回退 UTF-8（对纯 ASCII 与 UTF-8 中文都正确）
+        var text = Encoding.UTF8.GetString(raw).TrimStart('\uFEFF', '\0');
+        return text.Contains('\uFFFD') ? Encoding.Default.GetString(raw) : text;
+    }
+
+    /// <summary>
+    /// 从工具输出里挑出真正的版本行。
+    ///
+    /// 排除项来自实测：EULA 授权页（"SYSINTERNALS SOFTWARE LICENSE TERMS"）、
+    /// 用法标题（Usage / 用法）、空行。Sysinternals 的惯例是首行形如
+    /// "Sigcheck v2.92 - File version and signature viewer"，含 " v&lt;数字&gt;"。
+    /// </summary>
+    /// <summary>
+    /// 清理一行文本：先剥 BOM / NUL，再 trim 空白。
+    ///
+    /// 顺序不能反：UTF-16LE 解码后 BOM 会留在行首，此时行首字符不是空白，
+    /// 先 Trim() 什么也去不掉，剥完 BOM 才露出真正的空格（实测 sigcheck 首行是这样）。
+    /// </summary>
+    private static string CleanLine(string line) =>
+        line.Trim('\uFEFF', '\0', '\r', '\n', ' ', '\t').Trim();
+
+    internal static string? PickVersionLine(string text)
+    {
+        foreach (var raw in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var l = CleanLine(raw);
+            if (l.Length == 0) continue;
+            if (l.StartsWith("Usage", StringComparison.OrdinalIgnoreCase)) continue;
+            if (l.StartsWith("用法", StringComparison.Ordinal)) continue;
+            if (l.Contains("LICENSE TERMS", StringComparison.OrdinalIgnoreCase)) continue;
+            if (l.Contains("EULA", StringComparison.OrdinalIgnoreCase)) continue;
+            // EULA 页的典型句子
+            if (l.StartsWith("This program", StringComparison.OrdinalIgnoreCase)) continue;
+            if (l.StartsWith("By using", StringComparison.OrdinalIgnoreCase)) continue;
+
+            // 优先直接返回带 " v<数字>" 的行（Sysinternals 风格）
+            if (System.Text.RegularExpressions.Regex.IsMatch(l, @"\bv\d+\.\d+"))
+                return l.Length > 200 ? l[..200] : l;
+        }
+
+        // 没有明显版本行，退回第一条像样的文本
+        var fallback = text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(CleanLine)
+            .FirstOrDefault(l => l.Length > 0
+                && !l.StartsWith("Usage", StringComparison.OrdinalIgnoreCase)
+                && !l.StartsWith("用法", StringComparison.Ordinal)
+                && !l.Contains("LICENSE TERMS", StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(fallback)) return null;
+        return fallback.Length > 200 ? fallback[..200] : fallback;
+    }
+
+    /// <summary>兜底：从路径片段里抠版本号，例如 "C:\Tools\ghidra_12.1.4_PUBLIC" → "12.1.4"。</summary>
+    private static string? TryParseVersionFromPath(string exePath)
+    {
+        try
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(
+                exePath, @"[_\-\s]v?(\d+\.\d+(?:\.\d+)*)");
+            return m.Success ? m.Groups[1].Value : null;
         }
         catch
         {

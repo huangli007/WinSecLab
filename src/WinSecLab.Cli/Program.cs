@@ -33,7 +33,9 @@ public static class Program
             {
                 "analyze" or "scan" => await RunAnalyzeAsync(options).ConfigureAwait(false),
                 "monitor" => await RunMonitorAsync(options).ConfigureAwait(false),
-                "report" => RunReport(options),
+                "report" => await RunReportAsync(options).ConfigureAwait(false),
+                "findings" => RunFindings(options),
+                "compare" => RunCompare(options),
                 "projects" or "list" => RunProjects(options),
                 "plugins" => RunPlugins(options),
                 "doctor" => RunDoctor(options),
@@ -260,7 +262,7 @@ public static class Program
 
     // ═════════════════════════════════ report ═════════════════════════════════
 
-    private static int RunReport(CliOptions options)
+    private static async Task<int> RunReportAsync(CliOptions options)
     {
         var id = options.Positional.FirstOrDefault();
         if (string.IsNullOrWhiteSpace(id))
@@ -308,6 +310,24 @@ public static class Program
             Console.WriteLine($"  图谱重建失败（报告仍会生成）：{ex.Message}");
         }
 
+        // 与上一轮对比（回归视角）：报告里带上「这次比上次多了什么」，
+        // 否则每轮报告都是孤立的快照，看不出改版的真实影响。
+        WinSecLab.Core.Models.ComparisonResult? reportComparison = null;
+        try
+        {
+            var hist = db.GetSnapshots();
+            if (hist.Count > 0)
+            {
+                var cur = WinSecLab.Core.Engines.Analysis.RunComparer.Capture(
+                    result, result.Events.FirstOrDefault()?.SessionId);
+                reportComparison = WinSecLab.Core.Engines.Analysis.RunComparer.Compare(hist[0], cur);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  对比计算跳过：{ex.Message}");
+        }
+
         var settings = workspace.LoadSettings();
         var engine = new WinSecLab.Core.Engines.Reports.ReportEngine();
         var report = engine.Generate(result, new WinSecLab.Core.Engines.Reports.ReportOptions
@@ -318,6 +338,7 @@ public static class Program
             DocumentId = project.Id,
             AnalystName = settings.AnalystName,
             Organization = settings.Organization,
+            Comparison = reportComparison,
         });
 
         foreach (var f in report.Files) Console.WriteLine($"  已生成：{f}");
@@ -339,6 +360,29 @@ public static class Program
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"  CSV 导出失败：{ex.Message}");
+            }
+        }
+
+        // --pdf：把刚生成的 HTML 报告打印成 PDF（走系统自带 Edge，零依赖）
+        if (options.Has("--pdf"))
+        {
+            var html = report.Files.FirstOrDefault(f =>
+                f.EndsWith(".html", StringComparison.OrdinalIgnoreCase));
+
+            if (html is null)
+            {
+                Console.Error.WriteLine("  没有可转换的 HTML 报告，跳过 PDF 导出。");
+            }
+            else
+            {
+                var pdfPath = System.IO.Path.ChangeExtension(html, ".pdf");
+                Console.WriteLine("  正在导出 PDF（调用 Edge 无头打印）…");
+                var pdf = await WinSecLab.Core.Engines.Reports.PdfExporter
+                    .ExportAsync(html, pdfPath)
+                    .ConfigureAwait(false);
+
+                if (pdf.Success) Console.WriteLine($"  已生成：{pdf.Path}");
+                else Console.Error.WriteLine($"  PDF 导出失败：{pdf.Error}");
             }
         }
 
@@ -385,6 +429,205 @@ public static class Program
         Console.WriteLine("删除项目：wsx projects --delete <项目编号>（默认移入回收站，加 --permanent 彻底删除）");
         return 0;
     }
+
+    /// <summary>
+    /// 列出/复核项目的发现项（§9 人工深入分析）。把 GUI 里的复核闭环搬到命令行，
+    /// 让批量或 CI 场景也能在分析后统一做结论确认，而不是只能点界面。
+    /// </summary>
+    private static int RunFindings(CliOptions options)
+    {
+        var workspace = new WorkspaceService(options.Get("--workspace"));
+        var id = options.Positional.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            Console.Error.WriteLine("用法：wsx findings <项目编号> [--status 待处理|已确认|误报|接受风险|已整改] [--note \"复核意见\"] [--finding WS-101]");
+            return 2;
+        }
+
+        var opened = workspace.OpenProject(id);
+        if (opened is null)
+        {
+            Console.Error.WriteLine($"找不到项目：{id}");
+            return 2;
+        }
+
+        var (project, _, db) = opened.Value;
+        var findings = db.GetFindings(limit: 5000);
+
+        // 复核写回：必须同时给 --finding 与 --status（不给出就不改，避免误操作）
+        var statusText = options.Get("--status");
+        var findByTarget = options.Get("--finding");
+        if (!string.IsNullOrWhiteSpace(statusText) || !string.IsNullOrWhiteSpace(findByTarget))
+        {
+            if (string.IsNullOrWhiteSpace(statusText) || string.IsNullOrWhiteSpace(findByTarget))
+            {
+                Console.Error.WriteLine("复核需要同时指定 --finding <编号> 与 --status <状态>。");
+                return 2;
+            }
+
+            var status = ParseFindingStatus(statusText!);
+            if (status is null)
+            {
+                Console.Error.WriteLine($"无法识别的状态：{statusText}（可用：待处理 | 已确认 | 误报 | 接受风险 | 已整改）");
+                return 2;
+            }
+
+            var ok = db.UpdateFindingReview(findByTarget!, status.Value, options.Get("--note"));
+            if (!ok)
+            {
+                Console.Error.WriteLine($"未找到发现项：{findByTarget}");
+                return 1;
+            }
+
+            Console.WriteLine($"已更新复核：{findByTarget} → {status.Value}（{DescribeFindingStatus(status.Value)}）");
+            if (!string.IsNullOrWhiteSpace(options.Get("--note")))
+                Console.WriteLine($"  复核意见：{options.Get("--note")}");
+            return 0;
+        }
+
+        Console.WriteLine($"项目 {project.Id} — {project.Name}");
+        Console.WriteLine();
+        if (findings.Count == 0)
+        {
+            Console.WriteLine("该项目暂无发现项。");
+            return 0;
+        }
+
+        Console.WriteLine($"{"编号",-10} {"等级",-6} {"状态",-10} {"置信度",-8} 标题");
+        PrintSeparator('-', 96);
+        foreach (var f in findings.OrderByDescending(f => f.Severity).ThenBy(f => f.Id, StringComparer.Ordinal))
+        {
+            Console.WriteLine($"{f.Id,-10} {f.SeverityText,-6} {f.StatusText,-10} {f.ConfidenceText,-8} "
+                              + Truncate(f.Title, 60));
+        }
+
+        var reviewed = findings.Count(f => f.Status != FindingStatus.Open);
+        Console.WriteLine();
+        Console.WriteLine($"共 {findings.Count} 条，已复核 {reviewed} 条，待处理 {findings.Count - reviewed} 条。");
+        Console.WriteLine("复核：wsx findings <项目编号> --finding WS-101 --status 已确认 --note \"说明\"");
+        return 0;
+    }
+
+    /// <summary>
+    /// 会话/轮次对比（回归测试）：把最近两轮快照做 diff，回答"这次比上次多了什么"。
+    /// </summary>
+    private static int RunCompare(CliOptions options)
+    {
+        var workspace = new WorkspaceService(options.Get("--workspace"));
+        var id = options.Positional.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            Console.Error.WriteLine("用法：wsx compare <项目编号> [--base <快照编号>] [--json]");
+            return 2;
+        }
+
+        var opened = workspace.OpenProject(id);
+        if (opened is null)
+        {
+            Console.Error.WriteLine($"找不到项目：{id}");
+            return 2;
+        }
+
+        var (project, _, db) = opened.Value;
+        var snapshots = db.GetSnapshots(50);
+        if (snapshots.Count == 0)
+        {
+            Console.Error.WriteLine("该项目还没有任何分析快照，先跑一次 wsx analyze。");
+            return 1;
+        }
+
+        // 默认：最新一轮 vs 它之前的一轮。--base 可指定与更早的某轮对比。
+        var current = snapshots[0];
+        var baseId = options.Get("--base");
+        AnalysisSnapshot? baseline = string.IsNullOrWhiteSpace(baseId)
+            ? db.GetPreviousSnapshot(current.Id)
+            : snapshots.FirstOrDefault(s => s.Id.Equals(baseId, StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(baseId) && baseline is null)
+        {
+            Console.Error.WriteLine($"找不到快照：{baseId}");
+            return 2;
+        }
+
+        var cmp = Core.Engines.Analysis.RunComparer.Compare(baseline, current);
+
+        if (options.Has("--json"))
+        {
+            Console.WriteLine(Core.Serialization.WslJson.Serialize(cmp, indented: true));
+            return 0;
+        }
+
+        Console.WriteLine($"项目 {project.Id} — {project.Name}");
+        Console.WriteLine();
+        Console.WriteLine($"本轮快照：{current.Id}（{current.CapturedAt:yyyy-MM-dd HH:mm}）");
+        if (baseline is not null)
+            Console.WriteLine($"基线快照：{baseline.Id}（{baseline.CapturedAt:yyyy-MM-dd HH:mm}）");
+        Console.WriteLine();
+        Console.WriteLine(cmp.Verdict);
+        Console.WriteLine();
+
+        if (!cmp.HasBaseline)
+        {
+            Console.WriteLine($"本轮共 {current.TotalFindings} 项发现（严重 {current.CriticalCount} / 高 {current.HighCount} "
+                              + $"/ 中 {current.MediumCount} / 低 {current.LowCount} / 提示 {current.InfoCount}）。");
+            Console.WriteLine("再跑一次分析后，本命令即可给出与本次的差异。");
+            return 0;
+        }
+
+        if (cmp.TargetChanged)
+        {
+            Console.WriteLine("⚠ 两轮样本哈希不一致，差异可能来自版本本身而非行为变化。");
+            Console.WriteLine();
+        }
+
+        Console.WriteLine($"发现项总数：{current.TotalFindings}（上轮 {baseline!.TotalFindings}，变化 {Signed(cmp.DeltaFindings)}）");
+        Console.WriteLine($"事件总数：  {current.EventCount}（上轮 {baseline.EventCount}，变化 {Signed(cmp.DeltaEvents)}）");
+        Console.WriteLine($"网络连接：  {current.ConnectionCount}（上轮 {baseline.ConnectionCount}，变化 {Signed(cmp.DeltaConnections)}）");
+        Console.WriteLine();
+
+        PrintSnapshotSection("新增发现", cmp.Added);
+        PrintSnapshotSection("消失发现（上轮有、本轮未再命中）", cmp.Removed);
+
+        if (cmp.Changed.Count > 0)
+        {
+            Console.WriteLine($"── 变化明细（{cmp.Changed.Count}）──");
+            foreach (var c in cmp.Changed)
+                Console.WriteLine($"  {c.Id} {Truncate(c.Title, 40)}：{c.Field} {c.Before} → {c.After}");
+            Console.WriteLine();
+        }
+
+        return 0;
+    }
+
+    private static void PrintSnapshotSection(string title, List<SnapshotFinding> items)
+    {
+        if (items.Count == 0) return;
+        Console.WriteLine($"── {title}（{items.Count}）──");
+        foreach (var f in items)
+            Console.WriteLine($"  {f.Id,-10} {f.SeverityText,-6} {Truncate(f.Title, 52)}");
+        Console.WriteLine();
+    }
+
+    private static string Signed(int delta) => delta > 0 ? $"+{delta}" : delta.ToString();
+
+    private static FindingStatus? ParseFindingStatus(string raw) => raw.Trim() switch    {
+        "待处理" or "open" => FindingStatus.Open,
+        "已确认" or "confirmed" => FindingStatus.Confirmed,
+        "误报" or "falsepositive" or "fp" => FindingStatus.FalsePositive,
+        "接受风险" or "accepted" => FindingStatus.Accepted,
+        "已整改" or "已修复" or "remediated" or "fixed" => FindingStatus.Remediated,
+        _ => null,
+    };
+
+    private static string DescribeFindingStatus(FindingStatus s) => s switch
+    {
+        FindingStatus.Open => "待处理",
+        FindingStatus.Confirmed => "已确认",
+        FindingStatus.FalsePositive => "误报",
+        FindingStatus.Accepted => "接受风险",
+        FindingStatus.Remediated => "已整改",
+        _ => s.ToString(),
+    };
 
     /// <summary>
     /// 删除项目。默认移入回收站（可从系统回收站恢复），--permanent 才彻底删除。
@@ -652,6 +895,15 @@ wsx —— WinSecLab Windows 应用程序安全测试平台（命令行）
   wsx monitor <目标文件> [选项]      仅执行动态监控（等价于 analyze --dynamic-only）
   wsx report  <项目编号>             基于已落库结果重新生成报告
   wsx report  <项目编号> --csv       额外导出发现/证据清单 CSV（Excel 可打开）
+  wsx report  <项目编号> --pdf       额外把 HTML 报告打印成 PDF（走系统自带 Edge）
+  wsx findings <项目编号>            列出发现项及人工复核状态
+  wsx findings <项目编号> --finding <编号> --status <状态> [--note "复核意见"]
+                                     人工复核：写回处理状态与复核意见
+                                     （状态：待处理 | 已确认 | 误报 | 接受风险 | 已整改）
+  wsx compare <项目编号>             与上一轮分析对比（新增/消失/变化），回归测试用
+  wsx compare <项目编号> --base <快照编号>
+                                     与指定的历史快照对比
+  wsx compare <项目编号> --json      以 JSON 输出对比结果（便于接入 CI）
   wsx projects                       列出工作区内的项目
   wsx projects --delete <编号>        删除项目（默认移入回收站，可恢复）
   wsx projects --delete <编号> --permanent

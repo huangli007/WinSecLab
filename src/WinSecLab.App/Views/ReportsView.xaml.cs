@@ -21,6 +21,9 @@ public sealed class ReportAction
 {
     public string Label { get; init; } = "";
     public string Path { get; init; } = "";
+
+    /// <summary>只有 HTML 能直接打印成 PDF，其它格式不显示导出按钮。</summary>
+    public bool CanExportPdf => Path.EndsWith(".html", StringComparison.OrdinalIgnoreCase);
 }
 
 public partial class ReportsView : UserControl, IRefreshable
@@ -130,5 +133,35 @@ public partial class ReportsView : UserControl, IRefreshable
     private void RevealFile_OnClick(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: string path }) AppState.RevealInExplorer(path);
+    }
+
+    /// <summary>把选中的 HTML 报告打印成 PDF（Edge 无头，耗时几秒，按钮期间禁用防重复点）。</summary>
+    private async void ExportPdf_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string path } btn) return;
+
+        btn.IsEnabled = false;
+        var original = btn.Content;
+        btn.Content = "导出中…";
+        try
+        {
+            var pdf = await _state.ExportReportPdfAsync(path);
+            if (pdf is null)
+            {
+                MessageBox.Show("PDF 导出失败，详情见运行日志。", "WinSecLab",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            Reload();   // 让新生成的 PDF 出现在列表里
+            if (MessageBox.Show($"已生成 PDF：\n{Path.GetFileName(pdf)}\n\n现在打开？", "WinSecLab",
+                    MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
+                AppState.OpenInShell(pdf);
+        }
+        finally
+        {
+            btn.Content = original;
+            btn.IsEnabled = true;
+        }
     }
 }

@@ -79,7 +79,8 @@ public sealed class GhidraToolAdapter : ExternalToolAdapterBase
                 $"\"{projectDir}\" {projectName} -import {ProcessRunner.Quote(target)} "
                 + $"-scriptPath {ProcessRunner.Quote(scriptDir)} -postScript WinSecLabExport.java {ProcessRunner.Quote(exportCsv)} "
                 + $"-analysisTimeoutPerFile {timeoutSec} -deleteProject",
-                dir, timeoutMs: (timeoutSec + 120) * 1000, cancellationToken: context.CancellationToken, log: log.Add)
+                dir, timeoutMs: (timeoutSec + 120) * 1000, cancellationToken: context.CancellationToken, log: log.Add,
+                extraEnvironment: BuildJavaEnvironment(log))
                 .ConfigureAwait(false);
 
             var rawFile = ToolArtifact.WriteText(dir, "ghidra-headless.log", run.Combined);
@@ -172,6 +173,109 @@ public sealed class GhidraToolAdapter : ExternalToolAdapterBase
             evidence, null, artifacts);
         foreach (var l in log) result.Log.Add(l);
         return result;
+    }
+
+    /// <summary>
+    /// Ghidra 需要 JDK 21+，而用户机器上的 JAVA_HOME 可能是更老的版本（实测本机是 11），
+    /// 那样 analyzeHeadless 会直接起不来。这里只给 **Ghidra 这个子进程**注入合适的 JAVA_HOME，
+    /// 不动用户的系统环境变量 —— 否则可能把别的依赖老 JDK 的工具弄坏。
+    ///
+    /// 探测顺序：已装的高版本 JDK 常见安装位置 → 若现有 JAVA_HOME 就满足要求则沿用。
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? BuildJavaEnvironment(List<string> log)
+    {
+        var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        var current = Environment.GetEnvironmentVariable("JAVA_HOME");
+        if (!string.IsNullOrWhiteSpace(current) && GetJavaMajorVersion(current) >= 21)
+        {
+            log.Add($"Ghidra：沿用现有 JAVA_HOME（{current}）");
+            return env;   // 已满足，无需覆盖
+        }
+
+        var candidate = FindJdk21();
+        if (candidate is not null)
+        {
+            env["JAVA_HOME"] = candidate;
+            // 把新 JDK 的 bin 放到 PATH 最前，避免子进程又抓回旧的 java.exe
+            env["PATH"] = Path.Combine(candidate, "bin") + Path.PathSeparator
+                          + (Environment.GetEnvironmentVariable("PATH") ?? "");
+            log.Add($"Ghidra：JAVA_HOME 指向 {candidate}（检测到现有版本不满足 JDK 21+ 要求）");
+        }
+        else
+        {
+            log.Add("Ghidra：未找到 JDK 21+，若 headless 失败请安装 JDK 21 或设置 JAVA_HOME。");
+        }
+
+        return env.Count == 0 ? null : env;
+    }
+
+    /// <summary>在常见安装位置找 JDK 21+，返回 JDK 根目录（含 bin\java.exe）。</summary>
+    private static string? FindJdk21()
+    {
+        var roots = new[]
+        {
+            @"%ProgramFiles%\Zulu", @"%ProgramFiles%\Eclipse Adoptium", @"%ProgramFiles%\Java",
+            @"%ProgramFiles%\Microsoft", @"%ProgramFiles%\BellSoft\LibericaJDK",
+            @"%LOCALAPPDATA%\Programs\Eclipse Adoptium", @"C:\Java", @"D:\Java",
+        };
+
+        foreach (var rootTpl in roots)
+        {
+            var root = Environment.ExpandEnvironmentVariables(rootTpl);
+            if (!Directory.Exists(root)) continue;
+
+            try
+            {
+                foreach (var dir in Directory.EnumerateDirectories(root))
+                {
+                    if (GetJavaMajorVersion(dir) >= 21) return dir;
+                }
+            }
+            catch { }
+        }
+
+        return null;
+    }
+
+    /// <summary>读 JAVA_HOME 下的 release 文件判断主版本号；读不到返回 0。</summary>
+    private static int GetJavaMajorVersion(string javaHome)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(javaHome) || !Directory.Exists(javaHome)) return 0;
+
+            // release 文件里有一行 JAVA_VERSION="21.0.12"
+            var release = Path.Combine(javaHome, "release");
+            if (File.Exists(release))
+            {
+                foreach (var line in File.ReadAllLines(release))
+                {
+                    if (!line.StartsWith("JAVA_VERSION", StringComparison.OrdinalIgnoreCase)) continue;
+                    var quote = line.IndexOf('"');
+                    if (quote < 0) continue;
+                    var ver = line[(quote + 1)..].TrimEnd('"');
+                    var parts = ver.Split('.');
+                    if (parts.Length == 0) continue;
+                    if (int.TryParse(parts[0], out var major))
+                    {
+                        // 1.8 这类老版本号：主版本在第二段
+                        if (major == 1 && parts.Length > 1 && int.TryParse(parts[1], out var legacy)) return legacy;
+                        return major;
+                    }
+                }
+            }
+
+            // 兜底：目录名里带版本号（zulu-21 / jdk-21.0.1）
+            var name = Path.GetFileName(javaHome);
+            foreach (var token in name.Split('-', '_', '.'))
+            {
+                if (int.TryParse(token, out var n) && n >= 8 && n <= 99) return n;
+            }
+        }
+        catch { }
+
+        return 0;
     }
 
     internal sealed class GhidraFunction

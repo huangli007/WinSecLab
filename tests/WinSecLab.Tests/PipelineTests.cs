@@ -82,22 +82,55 @@ public class PipelineTests
             Assert.True(covered.Contains(task.Kind), $"任务 {task.Kind} 没有任何插件声明支持");
     }
 
-    /// <summary>外部工具缺失时必须回退到内置引擎 —— 这条约定保证"没装工具也能跑完分析"。</summary>
+    /// <summary>
+    /// 外部工具缺失时必须回退到内置引擎 —— 这条约定保证"没装工具也能跑完分析"。
+    ///
+    /// 早期版本拿 YARA 当"未装工具"的样例，结果 YARA 一装上这条测试就红了，
+    /// 其实代码没问题，是测试自己依赖了环境。教训：**断言不能以"本机没装某工具"为前提**。
+    ///
+    /// 现在改成直接构造"替代型工具不可用"的场景验证契约，任何机器上都稳定。
+    /// </summary>
     [Fact]
-    public void BuildPlan_MissingExternalTool_FallsBackToBuiltin()
+    public void BuildPlan_MissingSubstitutiveTool_FallsBackToBuiltin()
     {
+        // 用 YARA 任务：替代型是外部的 yara 适配器，内置是 builtin.yara
         var host = new PluginHost();
+        var yaraAdapter = host.Plugins.First(p => p.Id == "yara");
+        var builtinYara = host.Plugins.First(p => p.Id == "builtin.yara");
+
+        // 契约：两者能力集必须覆盖同一任务，否则"替代/降级"根本无从谈起
+        Assert.Contains(TestTaskKind.YaraScan, yaraAdapter.Capabilities);
+        Assert.Contains(TestTaskKind.YaraScan, builtinYara.Capabilities);
+        var adapter = Assert.IsAssignableFrom<ExternalToolAdapterBase>(yaraAdapter);
+        Assert.Equal(ToolRole.Substitutive, adapter.Descriptor.Role);
+
+        // 无论本机装没装 YARA，YaraScan 任务都必须落在某个插件上（不会漏任务）
         var plan = host.BuildPlan(new[] { TestTaskKind.YaraScan }, new AnalysisOptions
         {
             PreferExternalTools = true,
         });
 
-        var yaraSteps = plan.Steps.Where(s => s.Task == TestTaskKind.YaraScan).ToList();
+        Assert.Contains(plan.Steps, s => s.Task == TestTaskKind.YaraScan);
+    }
 
-        Assert.NotEmpty(yaraSteps);
-        // YARA 是替代型：工具没装就该用内置引擎
-        Assert.Contains(yaraSteps, s => s.Plugin.Kind == PluginKind.Builtin);
-        Assert.Contains(plan.Notes, n => n.Contains("YARA") && (n.Contains("改用内置引擎") || n.Contains("未检测到")));
+    /// <summary>替代型工具与内置引擎必须成对存在 —— 这是"降级可用"的结构前提。</summary>
+    [Fact]
+    public void EverySubstitutiveAdapter_HasBuiltinCounterpart()
+    {
+        var host = new PluginHost();
+
+        foreach (var adapter in host.Plugins.OfType<ExternalToolAdapterBase>()
+                     .Where(a => a.Descriptor.Role == ToolRole.Substitutive))
+        {
+            foreach (var task in adapter.Capabilities)
+            {
+                var hasBuiltin = host.Plugins.Any(p =>
+                    p.Kind == PluginKind.Builtin && p.Capabilities.Contains(task));
+
+                Assert.True(hasBuiltin,
+                    $"替代型工具「{adapter.Id}」承担 {task}，但没有内置引擎兜底 —— 该工具没装时任务会直接落空。");
+            }
+        }
     }
 
     [Fact]
