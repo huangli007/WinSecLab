@@ -53,10 +53,16 @@ wsx help
 ## 2. 测试
 
 ```
-dotnet test tests/WinSecLab.Tests/WinSecLab.Tests.csproj -c Release
+bash test.sh              # 全量
+bash test.sh Pipeline     # 按类名过滤
 ```
 
-**174 个用例全部通过**，覆盖七类回归点：
+> 别裸跑 `dotnet test`。本机杀软（360 / 火绒）会注入 DLL 到子进程，导致测试宿主
+> **偶发原生崩溃**——没有任何失败用例却报「测试主机进程崩溃」，崩溃点随机。
+> `test.sh` 内置 `--blame-crash --blame-hang-timeout 180s` 规避该问题，
+> 并先 `dotnet build-server shutdown` 避免文件锁。
+
+**186 个用例全部通过**，覆盖八类回归点：
 
 | 类别 | 防的是什么 |
 |---|---|
@@ -308,7 +314,7 @@ WinSecLab.exe --snapshot <输出目录> --snapshot-width 1480 --snapshot-height 
 dotnet build WinSecLab.slnx -c Release
 
 # 运行全部单元测试
-dotnet test tests/WinSecLab.Tests/WinSecLab.Tests.csproj -c Release
+bash test.sh
 ```
 
 **发布自包含单文件**（免 .NET 运行时，双击即跑，产物在 `dist/win-x64/`）：
