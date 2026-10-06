@@ -97,7 +97,7 @@ public sealed class ReportEngine
     // HTML
     // =====================================================================
 
-    private static string BuildHtml(AnalysisResult result, ReportOptions options)
+    internal static string BuildHtml(AnalysisResult result, ReportOptions options)
     {
         var html = new StringBuilder(256 * 1024);
         var stats = ComputeSeverityStats(result);
@@ -393,6 +393,7 @@ public sealed class ReportEngine
             });
 
             html.Append("<h3>节区明细</h3>\n");
+            html.Append(FoldStart($"节区明细（{pe.Sections.Count} 个节区）", $"{pe.Sections.Count} 项", true));
             AppendTable(html, new[] { "节区", "权限", "虚拟大小", "原始大小", "熵值", "性质" },
                 pe.Sections.Select(s => new[]
                 {
@@ -403,6 +404,7 @@ public sealed class ReportEngine
                     s.Entropy.ToString("F4"),
                     Util.Entropy.Describe(s.Entropy),
                 }));
+            html.Append(FoldEnd());
 
             if (pe.Imports.Count > 0)
             {
@@ -438,11 +440,10 @@ public sealed class ReportEngine
                             m.FunctionCount.ToString(),
                             string.Join(", ", m.Functions.Take(10).Select(f => f.Name)),
                         }));
-                    if (notable.Count > 15)
-                        html.Append($"<p class=\"note\">另有 {notable.Count - 15} 个次要模块，见下方折叠清单。</p>\n");
                 }
 
-                html.Append(FoldStart($"全部 {pe.Imports.Count} 个导入模块明细"));
+                // 全量导入清单默认收起 —— 正文已给关键模块，56 行明细只服务于逐条核对
+                html.Append(FoldStart($"全部 {pe.Imports.Count} 个导入模块明细", $"{pe.Imports.Count} 项", false));
                 AppendTable(html, new[] { "模块", "函数数", "代表性函数" },
                     pe.Imports.OrderByDescending(m => m.FunctionCount)
                         .Select(m => new[]
@@ -457,6 +458,7 @@ public sealed class ReportEngine
             if (pe.Exports.Count > 0)
             {
                 html.Append("<h3>导出函数</h3>\n");
+                html.Append(FoldStart($"导出函数清单（{pe.Exports.Count} 项）", $"{pe.Exports.Count} 项", pe.Exports.Count <= 20));
                 AppendTable(html, new[] { "序号", "名称", "RVA", "前向导出" },
                     pe.Exports.Take(80).Select(x => new[]
                     {
@@ -465,6 +467,7 @@ public sealed class ReportEngine
                         $"0x{x.Rva:X}",
                         x.ForwarderTarget ?? "",
                     }));
+                html.Append(FoldEnd());
             }
         }
 
@@ -532,12 +535,14 @@ public sealed class ReportEngine
             if (procEvents.Count > 0)
             {
                 html.Append("<h3>进程创建</h3>\n");
+                html.Append(FoldStart($"进程创建明细（{procEvents.Count} 条）", $"{procEvents.Count} 条", procEvents.Count <= 30));
                 AppendTable(html, new[] { "时间", "进程", "PID", "父 PID", "路径" },
                     procEvents.Take(120).Select(e => new[]
                     {
                         e.TimeText, e.ProcessName, e.ProcessId.ToString(), e.ParentProcessId.ToString(),
                         e.ProcessPath ?? "—",
                     }));
+                html.Append(FoldEnd());
             }
 
             var dllEvents = result.Events.Where(e => e.Type == MonitorEventType.DllLoad)
@@ -545,8 +550,10 @@ public sealed class ReportEngine
             if (dllEvents.Count > 0)
             {
                 html.Append("<h3>可疑模块加载（来自用户可写目录）</h3>\n");
+                html.Append(FoldStart($"可疑模块加载（{dllEvents.Count} 条）", $"{dllEvents.Count} 条", true));
                 AppendTable(html, new[] { "时间", "进程", "模块路径" },
                     dllEvents.Take(60).Select(e => new[] { e.TimeText, e.ProcessName, e.Target }));
+                html.Append(FoldEnd());
             }
 
             if (connections.Count > 0)
@@ -562,6 +569,7 @@ public sealed class ReportEngine
                 if (domains.Count > 0)
                 {
                     html.Append("<h4>DNS / 域名</h4>\n");
+                    html.Append(FoldStart($"域名解析清单（{domains.Count} 个域名）", $"{domains.Count} 个", domains.Count <= 30));
                     AppendTable(html, new[] { "域名", "解析地址", "连接数", "端口" },
                         domains.Take(60).Select(g => new[]
                         {
@@ -570,23 +578,34 @@ public sealed class ReportEngine
                             g.Count().ToString(),
                             string.Join("/", g.Select(c => c.RemotePort).Distinct().OrderBy(p => p).Take(5)),
                         }));
+                    html.Append(FoldEnd());
                 }
 
                 html.Append("<h4>连接明细（目标进程树相关）</h4>\n");
-                AppendTable(html, new[] { "进程", "本地端点", "远端端点", "域名", "状态", "服务", "归因" },
-                    connections.Where(c => c.IsFromTargetTree)
-                        .OrderByDescending(c => c.LastSeen)
-                        .Take(200)
-                        .Select(c => new[]
-                        {
-                            $"{c.ProcessName}({c.ProcessId})",
-                            c.LocalEndpoint,
-                            c.RemoteEndpoint,
-                            c.Domain ?? "—",
-                            c.StateText,
-                            c.ServiceHint,
-                            c.Attribution.ToString(),
-                        }));
+                var treeConns = connections.Where(c => c.IsFromTargetTree).ToList();
+                // 空明细不出折叠块 —— 一个「展开后什么都没有」的面板只会让人以为渲染坏了
+                if (treeConns.Count == 0)
+                {
+                    html.Append("<p class=\"note\">本次未采集到与目标进程树相关的连接记录。</p>\n");
+                }
+                else
+                {
+                    html.Append(FoldStart($"连接明细（{treeConns.Count} 条）", $"{treeConns.Count} 条", treeConns.Count <= 30));
+                    AppendTable(html, new[] { "进程", "本地端点", "远端端点", "域名", "状态", "服务", "归因" },
+                        treeConns.OrderByDescending(c => c.LastSeen)
+                            .Take(200)
+                            .Select(c => new[]
+                            {
+                                $"{c.ProcessName}({c.ProcessId})",
+                                c.LocalEndpoint,
+                                c.RemoteEndpoint,
+                                c.Domain ?? "—",
+                                c.StateText,
+                                c.ServiceHint,
+                                c.Attribution.ToString(),
+                            }));
+                    html.Append(FoldEnd());
+                }
             }
 
             if (fileEvents.Count > 0)
@@ -594,9 +613,11 @@ public sealed class ReportEngine
                 html.Append("<h3>文件系统变更</h3>\n");
                 html.Append($"<p>共 {fileEvents.Count} 条文件事件，其中可执行文件相关 "
                             + $"{fileEvents.Count(e => RuleContext.IsExecutablePath(e.Target))} 条。</p>\n");
+                html.Append(FoldStart($"文件事件明细（{fileEvents.Count} 条）", $"{fileEvents.Count} 条", fileEvents.Count <= 30));
                 AppendTable(html, new[] { "时间", "操作", "路径", "结果" },
                     fileEvents.Take(options.MaxEventRowsInReport)
                         .Select(e => new[] { e.TimeText, e.Operation, e.Target, e.Result }));
+                html.Append(FoldEnd());
             }
 
             if (regEvents.Count > 0)
@@ -604,11 +625,13 @@ public sealed class ReportEngine
                 html.Append("<h3>注册表变更</h3>\n");
                 html.Append($"<p>共 {regEvents.Count} 条注册表变更，其中自启动 / 持久化相关 "
                             + $"{regEvents.Count(e => Engines.Dynamic.RegistryMonitor.IsPersistencePath(e.Target))} 条。</p>\n");
+                html.Append(FoldStart($"注册表变更明细（{regEvents.Count} 条）", $"{regEvents.Count} 条", regEvents.Count <= 30));
                 AppendTable(html, new[] { "时间", "操作", "键 / 值", "变化内容" },
                     regEvents.Take(options.MaxEventRowsInReport).Select(e => new[]
                     {
                         e.TimeText, e.Operation, e.Target, e.Detail ?? "—",
                     }));
+                html.Append(FoldEnd());
             }
 
             // 事件构成统计放最后 —— 它是"仪表盘"性质，读者看完具体内容才需要这个总览
@@ -684,7 +707,8 @@ public sealed class ReportEngine
             // 全量依赖清单折叠进附录区，供需要逐条核对时展开
             if (result.Dependencies.Count > suspicious.Count)
             {
-                html.Append(FoldStart($"全部 {result.Dependencies.Count} 个依赖项明细"));
+                html.Append(FoldStart($"全部 {result.Dependencies.Count} 个依赖项明细",
+                    $"{result.Dependencies.Count} 项", false));
                 AppendTable(html, new[] { "模块", "状态", "来源", "版本", "签名" },
                     result.Dependencies.OrderByDescending(d => d.IsUserWritableLocation)
                         .ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
@@ -791,11 +815,13 @@ public sealed class ReportEngine
         else
         {
             html.Append($"<p>共 {result.Evidence.Count} 条证据，全部落盘在项目目录下，可通过证据 ID 在数据库中检索原始记录。</p>\n");
+            html.Append(FoldStart($"证据清单（{result.Evidence.Count} 条）", $"{result.Evidence.Count} 条", result.Evidence.Count <= 30));
             AppendTable(html, new[] { "证据 ID", "类型", "标题", "来源", "时间" },
                 result.Evidence.Take(options.MaxEvidenceRows).Select(e => new[]
                 {
                     e.Id, e.KindLabel, e.Title, e.Source, e.TimestampText,
                 }));
+            html.Append(FoldEnd());
         }
 
         // 12. 风险整改
@@ -856,7 +882,7 @@ public sealed class ReportEngine
 
             foreach (var group in allGroups.Where(g => g.Key != "General").Take(7))
             {
-                html.Append(FoldStart($"{group.Key}（{group.Value.Count} 条，显示前 20）"));
+                html.Append(FoldStart($"{group.Key}（显示前 20）", $"{group.Value.Count} 条", false));
                 AppendTable(html, new[] { "字符串", "节区", "偏移", "编码" },
                     group.Value.Take(20).Select(s => new[]
                     {
@@ -869,11 +895,14 @@ public sealed class ReportEngine
         if (options.IncludeRawEventSample && result.Events.Count > 0)
         {
             html.Append("<h3>10.3 事件流样例</h3>\n");
+            html.Append(FoldStart($"原始事件流样例（前 200 / 共 {result.Events.Count} 条）",
+                $"{Math.Min(200, result.Events.Count)} 条", false));
             AppendTable(html, new[] { "时间", "类型", "进程", "对象", "操作", "结果" },
                 result.Events.Take(200).Select(e => new[]
                 {
                     e.TimeText, e.TypeLabel, e.ProcessName, e.Target, e.Operation, e.Result,
                 }));
+            html.Append(FoldEnd());
         }
 
         html.Append("<h3>10.4 报告局限与免责说明</h3>\n");
@@ -927,14 +956,33 @@ public sealed class ReportEngine
     /// 折叠块。屏幕上是可点击展开的面板；打印时由 CSS 强制展开，保证 PDF 不丢明细。
     /// 用 checkbox 而非 &lt;details&gt;：浏览器不会在打印时展开未 open 的 details。
     /// </summary>
-    internal static string FoldStart(string title)
+    internal static string FoldStart(string title) => FoldStart(title, null, false);
+
+    /// <summary>
+    /// 折叠块（可指定初始展开状态与副标题计数）。
+    /// </summary>
+    /// <param name="title">折叠头标题</param>
+    /// <param name="badge">右侧计数徽标，如「56 项」，无则传 null</param>
+    /// <param name="open">是否默认展开。默认收起，保持正文精简</param>
+    internal static string FoldStart(string title, string? badge, bool open)
     {
         var id = "fold-" + Math.Abs(title.GetHashCode()).ToString("x");
-        return $"<div class=\"fold\"><input type=\"checkbox\" class=\"fold-toggle\" id=\"{id}\">"
-             + $"<label class=\"fold-head\" for=\"{id}\">{E(title)}</label><div class=\"fold-body\">";
+        var check = open ? " checked" : "";
+        var badgeHtml = badge is null ? "" : $"<span class=\"fold-badge\">{E(badge)}</span>";
+        return $"<div class=\"fold\"><input type=\"checkbox\" class=\"fold-toggle\" id=\"{id}\"{check}>"
+             + $"<label class=\"fold-head\" for=\"{id}\"><span class=\"fold-title\">{E(title)}</span>"
+             + badgeHtml + "</label><div class=\"fold-body\">";
     }
 
     internal static string FoldEnd() => "</div></div>\n";
+
+    /// <summary>
+    /// 可横向滚动的表格容器。用于列数多（≥6 列）的宽表 ——
+    /// 窄屏与 A4 打印宽度下，宽表若不加滚动容器会被挤成每列几个字，
+    /// 或撑破页面宽度导致右侧内容被裁掉。
+    /// </summary>
+    internal static string TableScrollStart() => "<div class=\"table-scroll\">";
+    internal static string TableScrollEnd() => "</div>\n";
 
     /// <summary>
     /// 取整改建议的第一句，用于摘要里的一行式"建议动作"。
@@ -995,8 +1043,16 @@ public sealed class ReportEngine
         html.Append("</tbody></table>\n");
     }
 
+    /// <summary>
+    /// 渲染数据表。
+    /// 列数 ≥6 时自动套 <c>.table-scroll</c> 横向滚动容器 —— 宽表在窄屏/PDF 下
+    /// 不加容器会被挤压或撑破页宽，逐处手写容易漏，故在此统一处理。
+    /// </summary>
     private static void AppendTable(StringBuilder html, string[] headers, IEnumerable<string[]> rows)
     {
+        var wide = headers.Length >= 6;
+        if (wide) html.Append(TableScrollStart());
+
         html.Append("<table class=\"data\"><thead><tr>");
         foreach (var h in headers) html.Append($"<th>{E(h)}</th>");
         html.Append("</tr></thead><tbody>\n");
@@ -1010,6 +1066,8 @@ public sealed class ReportEngine
         }
         if (!any) html.Append("<tr><td colspan=\"" + headers.Length + "\">（无数据）</td></tr>\n");
         html.Append("</tbody></table>\n");
+
+        if (wide) html.Append(TableScrollEnd());
     }
 
     private static string SeverityBadge(Severity severity)
@@ -1029,7 +1087,7 @@ public sealed class ReportEngine
     // Markdown
     // =====================================================================
 
-    private static string BuildMarkdown(AnalysisResult result, ReportOptions options)
+    internal static string BuildMarkdown(AnalysisResult result, ReportOptions options)
     {
         var md = new StringBuilder(96 * 1024);
         var stats = ComputeSeverityStats(result);
@@ -1174,10 +1232,46 @@ public sealed class ReportEngine
             md.Append($"| 整体熵 | {pe.OverallEntropy} |\n");
             md.Append($"| 缓解措施 | {pe.DllCharacteristics} |\n\n");
 
-            md.Append("### 节区\n\n| 节区 | 权限 | 原始大小 | 熵 | 性质 |\n|---|---|---|---|---|\n");
+            md.Append("<details open><summary>节区明细（" + pe.Sections.Count + " 个节区）</summary>\n\n");
+            md.Append("| 节区 | 权限 | 原始大小 | 熵 | 性质 |\n|---|---|---|---|---|\n");
             foreach (var s in pe.Sections)
                 md.Append($"| {s.Name} | {s.Permissions} | {s.RawSize:N0} | {s.Entropy:F4} | {Util.Entropy.Describe(s.Entropy)} |\n");
-            md.Append('\n');
+            md.Append("\n</details>\n\n");
+
+            // 导入 / 导出清单默认收起 —— 与 HTML 侧结构保持一致（正文精简、明细按需展开）
+            if (pe.Imports.Count > 0)
+            {
+                static bool IsApiSetMd2(string name) =>
+                    name.StartsWith("api-ms-win-", StringComparison.OrdinalIgnoreCase)
+                    || name.StartsWith("ext-ms-win-", StringComparison.OrdinalIgnoreCase);
+
+                var mdNotable = pe.Imports
+                    .Where(m => m.FunctionCount > 0 && !IsApiSetMd2(m.ModuleName))
+                    .OrderByDescending(m => m.FunctionCount).ToList();
+
+                if (mdNotable.Count > 0)
+                {
+                    md.Append("### 关键导入模块\n\n| 模块 | 函数数 | 代表性函数 |\n|---|---|---|\n");
+                    foreach (var m in mdNotable.Take(15))
+                        md.Append($"| {m.ModuleName} | {m.FunctionCount} | {string.Join(", ", m.Functions.Take(10).Select(f => f.Name))} |\n");
+                    md.Append('\n');
+                }
+
+                md.Append($"<details><summary>全部 {pe.Imports.Count} 个导入模块明细</summary>\n\n");
+                md.Append("| 模块 | 函数数 | 代表性函数 |\n|---|---|---|\n");
+                foreach (var m in pe.Imports.OrderByDescending(m => m.FunctionCount))
+                    md.Append($"| {m.ModuleName} | {m.FunctionCount} | {string.Join(", ", m.Functions.Take(8).Select(f => f.Name))} |\n");
+                md.Append("\n</details>\n\n");
+            }
+
+            if (pe.Exports.Count > 0)
+            {
+                md.Append($"<details{(pe.Exports.Count <= 20 ? " open" : "")}><summary>导出函数清单（{pe.Exports.Count} 项）</summary>\n\n");
+                md.Append("| 序号 | 名称 | RVA | 前向导出 |\n|---|---|---|---|\n");
+                foreach (var x in pe.Exports.Take(80))
+                    md.Append($"| {x.Ordinal} | {x.Name} | 0x{x.Rva:X} | {x.ForwarderTarget ?? ""} |\n");
+                md.Append("\n</details>\n\n");
+            }
         }
 
         // ── 5. 运行期观测（原动态/网络/文件/注册表四章合并） ─────────────────
@@ -1230,20 +1324,22 @@ public sealed class ReportEngine
 
             if (mdProcEvents.Count > 0)
             {
-                md.Append("### 进程创建\n\n| 时间 | 进程 | PID | 父 PID | 路径 |\n|---|---|---|---|---|\n");
+                md.Append($"<details><summary>进程创建明细（{mdProcEvents.Count} 条）</summary>\n\n");
+                md.Append("| 时间 | 进程 | PID | 父 PID | 路径 |\n|---|---|---|---|---|\n");
                 foreach (var e in mdProcEvents.Take(120))
                     md.Append($"| {e.TimeText} | {e.ProcessName} | {e.ProcessId} | {e.ParentProcessId} | `{e.ProcessPath ?? "—"}` |\n");
-                md.Append('\n');
+                md.Append("\n</details>\n\n");
             }
 
             var mdDllEvents = result.Events.Where(e => e.Type == MonitorEventType.DllLoad)
                 .Where(e => e.IsSuspicious).ToList();
             if (mdDllEvents.Count > 0)
             {
-                md.Append("### 可疑模块加载（来自用户可写目录）\n\n| 时间 | 进程 | 模块路径 |\n|---|---|---|\n");
+                md.Append($"<details open><summary>可疑模块加载（来自用户可写目录）（{mdDllEvents.Count} 条）</summary>\n\n");
+                md.Append("| 时间 | 进程 | 模块路径 |\n|---|---|---|\n");
                 foreach (var e in mdDllEvents.Take(60))
                     md.Append($"| {e.TimeText} | {e.ProcessName} | `{e.Target}` |\n");
-                md.Append('\n');
+                md.Append("\n</details>\n\n");
             }
 
             if (mdConnections.Count > 0)
@@ -1258,18 +1354,28 @@ public sealed class ReportEngine
                     .OrderByDescending(g => g.Count()).ToList();
                 if (mdDomains.Count > 0)
                 {
-                    md.Append("**DNS / 域名**\n\n| 域名 | 解析地址 | 连接数 | 端口 |\n|---|---|---|---|\n");
+                    md.Append($"<details><summary>DNS / 域名（{mdDomains.Count} 个域名）</summary>\n\n");
+                    md.Append("| 域名 | 解析地址 | 连接数 | 端口 |\n|---|---|---|---|\n");
                     foreach (var g in mdDomains.Take(60))
                         md.Append($"| {g.Key} | {string.Join(", ", g.Select(c => c.RemoteAddress).Distinct().Take(4))} "
                                   + $"| {g.Count()} | {string.Join("/", g.Select(c => c.RemotePort).Distinct().OrderBy(p => p).Take(5))} |\n");
-                    md.Append('\n');
+                    md.Append("\n</details>\n\n");
                 }
 
-                md.Append("**连接明细（目标进程树相关）**\n\n| 进程 | 本地端点 | 远端端点 | 域名 | 状态 |\n|---|---|---|---|---|\n");
-                foreach (var c in mdConnections.Where(c => c.IsFromTargetTree).OrderByDescending(c => c.LastSeen).Take(200))
-                    md.Append($"| {c.ProcessName}({c.ProcessId}) | {c.LocalEndpoint} | {c.RemoteEndpoint} "
-                              + $"| {c.Domain ?? "—"} | {c.StateText} |\n");
-                md.Append('\n');
+                var mdTreeConns = mdConnections.Where(c => c.IsFromTargetTree).ToList();
+                if (mdTreeConns.Count == 0)
+                {
+                    md.Append("本次未采集到与目标进程树相关的连接记录。\n\n");
+                }
+                else
+                {
+                    md.Append($"<details{(mdTreeConns.Count <= 30 ? " open" : "")}><summary>连接明细（目标进程树相关）（{mdTreeConns.Count} 条）</summary>\n\n");
+                    md.Append("| 进程 | 本地端点 | 远端端点 | 域名 | 状态 |\n|---|---|---|---|---|\n");
+                    foreach (var c in mdTreeConns.OrderByDescending(c => c.LastSeen).Take(200))
+                        md.Append($"| {c.ProcessName}({c.ProcessId}) | {c.LocalEndpoint} | {c.RemoteEndpoint} "
+                                  + $"| {c.Domain ?? "—"} | {c.StateText} |\n");
+                    md.Append("\n</details>\n\n");
+                }
             }
 
             if (result.Http.Count > 0)
@@ -1285,10 +1391,11 @@ public sealed class ReportEngine
                 md.Append("### 文件系统变更\n\n");
                 md.Append($"共 {mdFileEvents.Count} 条文件事件，其中可执行文件相关 "
                           + $"{mdFileEvents.Count(e => RuleContext.IsExecutablePath(e.Target))} 条。\n\n");
+                md.Append($"<details><summary>文件事件明细（{mdFileEvents.Count} 条）</summary>\n\n");
                 md.Append("| 时间 | 操作 | 路径 | 结果 |\n|---|---|---|---|\n");
                 foreach (var e in mdFileEvents.Take(options.MaxEventRowsInReport))
                     md.Append($"| {e.TimeText} | {e.Operation} | `{e.Target}` | {e.Result} |\n");
-                md.Append('\n');
+                md.Append("\n</details>\n\n");
             }
 
             if (mdRegEvents.Count > 0)
@@ -1296,10 +1403,11 @@ public sealed class ReportEngine
                 md.Append("### 注册表变更\n\n");
                 md.Append($"共 {mdRegEvents.Count} 条注册表变更，其中自启动 / 持久化相关 "
                           + $"{mdRegEvents.Count(e => Engines.Dynamic.RegistryMonitor.IsPersistencePath(e.Target))} 条。\n\n");
+                md.Append($"<details><summary>注册表变更明细（{mdRegEvents.Count} 条）</summary>\n\n");
                 md.Append("| 时间 | 操作 | 键 / 值 | 变化内容 |\n|---|---|---|---|\n");
                 foreach (var e in mdRegEvents.Take(options.MaxEventRowsInReport))
                     md.Append($"| {e.TimeText} | {e.Operation} | `{e.Target}` | {e.Detail ?? "—"} |\n");
-                md.Append('\n');
+                md.Append("\n</details>\n\n");
             }
 
             // 事件构成统计放最后 —— 仪表盘性质，读者看完具体内容才需要这个总览
@@ -1357,8 +1465,7 @@ public sealed class ReportEngine
             if (result.Dependencies.Count > mdDepSuspicious.Count)
             {
                 md.Append("<details><summary>全部 " + result.Dependencies.Count + " 个依赖项明细</summary>\n\n");
-                md.Append("| 模块 | 状态 | 来源 | 版本 | 签名 |\n|---|---|---|---|---|\n");
-                foreach (var d in result.Dependencies.OrderByDescending(d => d.IsUserWritableLocation)
+                md.Append("| 模块 | 状态 | 来源 | 版本 | 签名 |\n|---|---|---|---|---|\n");                foreach (var d in result.Dependencies.OrderByDescending(d => d.IsUserWritableLocation)
                              .ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase))
                     md.Append($"| {d.Name} | {(d.IsPresent ? "已解析" : "未解析")} | {d.SearchSource} "
                               + $"| {d.Version ?? "—"} | {d.IsSigned switch { true => "有效", false => "无签名", null => "—" }} |\n");
@@ -1402,10 +1509,11 @@ public sealed class ReportEngine
         else
         {
             md.Append($"共 {result.Evidence.Count} 条证据，全部落盘在项目目录下，可通过证据 ID 在数据库中检索原始记录。\n\n");
+            md.Append($"<details{(result.Evidence.Count <= 30 ? " open" : "")}><summary>证据清单（{result.Evidence.Count} 条）</summary>\n\n");
             md.Append("| 证据 ID | 类型 | 标题 | 来源 | 时间 |\n|---|---|---|---|---|\n");
             foreach (var e in result.Evidence.Take(options.MaxEvidenceRows))
                 md.Append($"| {e.Id} | {e.KindLabel} | {e.Title} | {e.Source} | {e.TimestampText} |\n");
-            md.Append('\n');
+            md.Append("\n</details>\n\n");
         }
 
         // ── 9. 风险整改 ────────────────────────────────────────────────
@@ -1458,10 +1566,11 @@ public sealed class ReportEngine
 
         if (options.IncludeRawEventSample && result.Events.Count > 0)
         {
-            md.Append("### 10.3 事件流样例\n\n| 时间 | 类型 | 进程 | 对象 | 操作 | 结果 |\n|---|---|---|---|---|---|\n");
+            md.Append($"### 10.3 事件流样例\n\n<details><summary>原始事件流样例（前 {Math.Min(200, result.Events.Count)} / 共 {result.Events.Count} 条）</summary>\n\n");
+            md.Append("| 时间 | 类型 | 进程 | 对象 | 操作 | 结果 |\n|---|---|---|---|---|---|\n");
             foreach (var e in result.Events.Take(200))
                 md.Append($"| {e.TimeText} | {e.TypeLabel} | {e.ProcessName} | `{e.Target}` | {e.Operation} | {e.Result} |\n");
-            md.Append('\n');
+            md.Append("\n</details>\n\n");
         }
 
         md.Append("### 10.4 报告局限与免责说明\n\n");
@@ -1720,15 +1829,28 @@ public sealed class ReportEngine
            改用 checkbox 折叠 —— 屏幕上可收可展，打印时用媒体查询强制全部展开。 */
         .fold { margin: 10px 0 16px; border: 1px solid #e3e8f0; border-radius: 8px; background: #fbfcfe; }
         .fold > input.fold-toggle { position: absolute; opacity: 0; pointer-events: none; }
-        .fold > label.fold-head { display: block; cursor: pointer; padding: 9px 14px; font-size: 12.5px;
-                                  color: #2e5b9f; font-weight: 600; user-select: none; }
-        .fold > label.fold-head::before { content: "▸ "; color: #7b8aa5; }
-        .fold > input.fold-toggle:checked + label.fold-head::before { content: "▾ "; }
+        .fold > label.fold-head { display: flex; align-items: center; gap: 8px; cursor: pointer;
+                                  padding: 9px 14px; font-size: 12.5px; color: #2e5b9f;
+                                  font-weight: 600; user-select: none; }
+        .fold > label.fold-head::before { content: "▸"; color: #7b8aa5; font-size: 11px;
+                                          transition: transform .12s ease; }
+        .fold > input.fold-toggle:checked + label.fold-head::before { content: "▾"; }
         .fold > label.fold-head:hover { background: #f2f6fd; border-radius: 8px; }
+        .fold > label.fold-head > .fold-title { flex: 1; }
+        .fold-badge { font-weight: 500; font-size: 11.5px; color: #6b7891; background: #eef2f9;
+                      border-radius: 10px; padding: 1px 9px; white-space: nowrap; }
         .fold > .fold-body { display: none; }
         .fold > input.fold-toggle:checked + label.fold-head + .fold-body { display: block; }
         .fold > .fold-body { border-top: 1px solid #e8ecf4; padding: 0 12px; }
         .fold > .fold-body > table.data { margin: 10px 0; width: 100%; }
+
+        /* 宽表横向滚动：列数多的表（连接明细、事件流等）在窄屏或 A4 打印宽度下
+           若不加容器会被挤成每列数字，或撑破页宽裁掉右侧列。 */
+        .table-scroll { overflow-x: auto; margin: 10px 0; -webkit-overflow-scrolling: touch; }
+        .table-scroll > table.data { margin: 0; min-width: 100%; }
+        .table-scroll::-webkit-scrollbar { height: 8px; }
+        .table-scroll::-webkit-scrollbar-thumb { background: #ccd5e4; border-radius: 4px; }
+        .table-scroll::-webkit-scrollbar-track { background: #f1f4f9; border-radius: 4px; }
         footer { max-width: 1200px; margin: 30px auto 0; color: #8a93a8; font-size: 12px; text-align: center; }
         @media print {
           body { background: #fff; }
@@ -1737,6 +1859,9 @@ public sealed class ReportEngine
           /* 打印时展开全部折叠内容，确保 PDF 不丢取证明细 */
           .fold > label.fold-head { display: none; }
           .fold > .fold-body { display: block; border-top: none; padding: 0; }
+          /* 打印时不滚动 —— 打印没有滚动交互，必须让宽表完整落在页面上 */
+          .table-scroll { overflow-x: visible; }
+          .table-scroll > table.data { table-layout: fixed; word-break: break-word; }
         }
         """;
 

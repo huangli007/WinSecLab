@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Windows 应用程序安全测试报告 — 最终验证 — notepad.exe</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0 0 60px; font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+       font-size: 14px; line-height: 1.7; color: #23272f; background: #f5f7fa; }
+.cover { background: linear-gradient(135deg, #1f3a63 0%, #2e5b9f 55%, #3f7ad1 100%); color: #fff;
+         padding: 54px 56px 40px; }
+.cover h1 { margin: 6px 0 4px; font-size: 30px; font-weight: 650; letter-spacing: .5px; }
+.cover .subtitle { margin: 0 0 26px; font-size: 15px; opacity: .88; }
+.cover .classification { display: inline-block; padding: 2px 12px; border: 1px solid rgba(255,255,255,.55);
+         border-radius: 999px; font-size: 12px; letter-spacing: 2px; opacity: .95; }
+table.meta { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; }
+table.meta th { text-align: left; width: 130px; font-weight: 500; opacity: .78; padding: 4px 12px 4px 0; }
+table.meta td { padding: 4px 0; word-break: break-all; }
+nav.toc { max-width: 1200px; margin: 26px auto 0; background: #fff; border: 1px solid #e3e8f0;
+          border-radius: 10px; padding: 18px 30px; }
+nav.toc h2 { margin: 0 0 8px; font-size: 16px; color: #2e5b9f; }
+nav.toc ul.toc-list { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 28px; }
+nav.toc ul.toc-list li { margin: 0 0 5px; break-inside: avoid; }
+nav.toc a { color: #2e5b9f; text-decoration: none; }
+nav.toc a .toc-num { display: inline-block; min-width: 20px; color: #8a95a8; font-variant-numeric: tabular-nums; }
+nav.toc a:hover { text-decoration: underline; }
+h2.section, section { max-width: 1200px; }
+h2.section { margin: 32px auto 12px; padding: 10px 18px; background: #fff; border-left: 5px solid #2e5b9f;
+             border-radius: 6px; font-size: 19px; color: #1f3a63; }
+.sec-body { max-width: 1200px; margin: 0 auto; background: #fff; border: 1px solid #e3e8f0;
+            border-radius: 10px; padding: 20px 26px; }
+h3 { font-size: 15px; color: #2e5b9f; margin: 22px 0 8px; }
+h4 { font-size: 13.5px; color: #44506b; margin: 16px 0 6px; }
+table.data { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 12.5px; }
+table.data th, table.data td { border: 1px solid #e2e7f0; padding: 6px 9px; text-align: left;
+                               vertical-align: top; word-break: break-word; }
+table.data thead th { background: #eef2f9; font-weight: 600; color: #2b3a55; position: sticky; top: 0; }
+table.data tbody tr:nth-child(even) { background: #fafbfe; }
+table.data.kv th { width: 190px; background: #f4f6fb; font-weight: 500; color: #47536b; }
+.summary-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin: 14px 0; }
+.stat { border-radius: 10px; padding: 14px 8px; text-align: center; border: 1px solid #e3e8f0; background: #fff; }
+.stat .num { display: block; font-size: 26px; font-weight: 700; line-height: 1.2; }
+.stat .lbl { font-size: 12px; color: #66708a; }
+.stat.sev-critical .num { color: #b3261e; } .stat.sev-high .num { color: #e05252; }
+.stat.sev-medium .num { color: #c8860d; } .stat.sev-low .num { color: #4a90d9; }
+.stat.sev-info .num { color: #7b8496; } .stat.sev-total .num { color: #2e5b9f; }
+.badge { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 11.5px;
+         font-weight: 600; white-space: nowrap; }
+.badge.sev-critical { background: #fce8e6; color: #b3261e; border: 1px solid #f3c1bd; }
+.badge.sev-high { background: #fdeaea; color: #c0332f; border: 1px solid #f6c6c4; }
+.badge.sev-medium { background: #fdf3e2; color: #a2690a; border: 1px solid #f0dcb4; }
+.badge.sev-low { background: #e9f2fc; color: #2f6ea8; border: 1px solid #c8ddf2; }
+.badge.sev-info { background: #f0f2f6; color: #5b6478; border: 1px solid #dde1ea; }
+.verdict { border-left: 4px solid #2e5b9f; background: #f2f6fd; padding: 12px 18px; border-radius: 6px;
+           margin: 14px 0; }
+.verdict p { margin: 4px 0; }
+.finding { border: 1px solid #e3e8f0; border-radius: 10px; padding: 16px 20px; margin: 16px 0;
+           background: #fff; }
+.finding-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.finding-id { font-family: Consolas, monospace; font-size: 13px; color: #2e5b9f; font-weight: 700; }
+.finding-title { font-size: 15.5px; font-weight: 600; }
+.prose { color: #333a48; }
+.prose.recommend { background: #f2f9f3; border-left: 3px solid #3f9c52; padding: 8px 14px; border-radius: 4px; }
+.prose.note { background: #f3f6fb; border-left: 3px solid #2e5b9f; padding: 8px 14px; border-radius: 4px; }
+.note { color: #5b6478; font-size: 12.5px; background: #f6f8fb; border-radius: 6px; padding: 8px 12px; }
+.warning { color: #8a5a00; background: #fff8e8; border-left: 3px solid #e8a33d; border-radius: 4px;
+           padding: 8px 12px; font-size: 12.5px; }
+ul.related { margin: 6px 0 12px; padding-left: 20px; font-size: 12.5px; color: #46506a; }
+ul.related li { word-break: break-all; }
+code { background: #f1f3f8; padding: 1px 5px; border-radius: 4px; font-family: Consolas, monospace;
+       font-size: 12px; }
+/* 折叠明细：正文保持精简，全量数据按需展开。
+   为什么不用 <details>：浏览器无法在打印时强制展开未 open 的 details，
+   导出的 PDF 会静默丢掉明细数据（这对取证报告是致命的）。
+   改用 checkbox 折叠 —— 屏幕上可收可展，打印时用媒体查询强制全部展开。 */
+.fold { margin: 10px 0 16px; border: 1px solid #e3e8f0; border-radius: 8px; background: #fbfcfe; }
+.fold > input.fold-toggle { position: absolute; opacity: 0; pointer-events: none; }
+.fold > label.fold-head { display: flex; align-items: center; gap: 8px; cursor: pointer;
+                          padding: 9px 14px; font-size: 12.5px; color: #2e5b9f;
+                          font-weight: 600; user-select: none; }
+.fold > label.fold-head::before { content: "▸"; color: #7b8aa5; font-size: 11px;
+                                  transition: transform .12s ease; }
+.fold > input.fold-toggle:checked + label.fold-head::before { content: "▾"; }
+.fold > label.fold-head:hover { background: #f2f6fd; border-radius: 8px; }
+.fold > label.fold-head > .fold-title { flex: 1; }
+.fold-badge { font-weight: 500; font-size: 11.5px; color: #6b7891; background: #eef2f9;
+              border-radius: 10px; padding: 1px 9px; white-space: nowrap; }
+.fold > .fold-body { display: none; }
+.fold > input.fold-toggle:checked + label.fold-head + .fold-body { display: block; }
+.fold > .fold-body { border-top: 1px solid #e8ecf4; padding: 0 12px; }
+.fold > .fold-body > table.data { margin: 10px 0; width: 100%; }
+
+/* 宽表横向滚动：列数多的表（连接明细、事件流等）在窄屏或 A4 打印宽度下
+   若不加容器会被挤成每列数字，或撑破页宽裁掉右侧列。 */
+.table-scroll { overflow-x: auto; margin: 10px 0; -webkit-overflow-scrolling: touch; }
+.table-scroll > table.data { margin: 0; min-width: 100%; }
+.table-scroll::-webkit-scrollbar { height: 8px; }
+.table-scroll::-webkit-scrollbar-thumb { background: #ccd5e4; border-radius: 4px; }
+.table-scroll::-webkit-scrollbar-track { background: #f1f4f9; border-radius: 4px; }
+footer { max-width: 1200px; margin: 30px auto 0; color: #8a93a8; font-size: 12px; text-align: center; }
+@media print {
+  body { background: #fff; }
+  h2.section, .sec-body, nav.toc, .finding { break-inside: avoid; }
+  nav.toc { break-after: page; }
+  /* 打印时展开全部折叠内容，确保 PDF 不丢取证明细 */
+  .fold > label.fold-head { display: none; }
+  .fold > .fold-body { display: block; border-top: none; padding: 0; }
+  /* 打印时不滚动 —— 打印没有滚动交互，必须让宽表完整落在页面上 */
+  .table-scroll { overflow-x: visible; }
+  .table-scroll > table.data { table-layout: fixed; word-break: break-word; }
+}</style>
+</head>
+<body>
+<header class="cover">
+<div class="classification">内部使用</div>
+<h1>Windows 应用程序安全测试报告 — 最终验证</h1>
+<p class="subtitle">notepad.exe</p>
+<table class="meta">
+<tr><th>报告编号</th><td>WS-20260929-008</td></tr>
+<tr><th>被测程序</th><td>notepad.exe</td></tr>
+<tr><th>程序版本</th><td>10.0.26100.9278 (WinBuild.160101.0800)</td></tr>
+<tr><th>SHA-256</th><td>468ffe129c395abf6b21a09efdf261910a95fb98aa982ead73caa7b2b684577e</td></tr>
+<tr><th>分析员</th><td>TianManyi</td></tr>
+<tr><th>生成时间</th><td>2026-10-06 16:01:18</td></tr>
+<tr><th>分析主机</th><td>WIN-O58D1FE3C92 / Microsoft Windows NT 10.0.26200.0</td></tr>
+<tr><th>风险结论</th><td>存在中风险问题，建议按迭代修复</td></tr>
+</table>
+</header>
+<nav class="toc"><h2>目录</h2><ul class="toc-list">
+<li><a href="#sec-executive"><span class="toc-num">1</span>执行摘要</a></li>
+<li><a href="#sec-application"><span class="toc-num">2</span>程序信息</a></li>
+<li><a href="#sec-environment"><span class="toc-num">3</span>测试环境</a></li>
+<li><a href="#sec-static"><span class="toc-num">4</span>静态分析</a></li>
+<li><a href="#sec-runtime"><span class="toc-num">5</span>运行期观测</a></li>
+<li><a href="#sec-dependencies"><span class="toc-num">6</span>依赖分析</a></li>
+<li><a href="#sec-findings"><span class="toc-num">7</span>安全发现</a></li>
+<li><a href="#sec-evidence"><span class="toc-num">8</span>证据链</a></li>
+<li><a href="#sec-remediation"><span class="toc-num">9</span>风险整改</a></li>
+<li><a href="#sec-appendix"><span class="toc-num">10</span>附录</a></li>
+</ul></nav>
+<h2 class="section" id="sec-executive">1. 执行摘要</h2>
+<div class="sec-body">
+<div class="summary-grid">
+<div class="stat sev-critical"><span class="num">0</span><span class="lbl">严重</span></div>
+<div class="stat sev-high"><span class="num">0</span><span class="lbl">高危</span></div>
+<div class="stat sev-medium"><span class="num">2</span><span class="lbl">中危</span></div>
+<div class="stat sev-low"><span class="num">0</span><span class="lbl">低危</span></div>
+<div class="stat sev-info"><span class="num">3</span><span class="lbl">信息</span></div>
+<div class="stat sev-total"><span class="num">5</span><span class="lbl">合计</span></div>
+</div>
+<div class="verdict"><p><strong>总体结论：</strong>存在中风险问题，建议按迭代修复</p><p>本次测试未发现严重或高危问题，但存在若干中风险项。建议纳入技术债跟踪，在后续版本中逐步收敛。 本次测试覆盖情况：静态分析：已完成；动态分析：已执行；网络采集：1 条连接；权限：标准用户；证据条数：21。</p></div>
+<h3>需立即关注</h3>
+<table class="data"><thead><tr><th style="width:80px">编号</th><th style="width:70px">等级</th><th>问题</th><th style="width:270px">建议动作</th></tr></thead><tbody>
+<tr><td><a href="#finding-WS-101">WS-101</a></td><td><span class="badge sev-medium">中危</span></td><td>可执行文件缺少有效的数字签名</td><td>为发布版本配置代码签名证书（EV 证书可获得 SmartScreen 立即信誉），在 CI 中对每个产物签名并校验。</td></tr>
+<tr><td><a href="#finding-WS-104">WS-104</a></td><td><span class="badge sev-medium">中危</span></td><td>YARA 规则命中</td><td>逐条核对命中的规则逻辑与匹配到的字符串位置；确认是已知库的误报后，把例外加入白名单并记录理由。</td></tr>
+</tbody></table>
+<h3>发现项清单</h3>
+<table class="data"><thead><tr><th style="width:80px">编号</th><th style="width:70px">等级</th><th>标题</th><th style="width:70px">置信度</th><th style="width:150px">类别</th><th style="width:96px">处理状态</th></tr></thead><tbody>
+<tr><td><a href="#finding-WS-101">WS-101</a></td><td><span class="badge sev-medium">中危</span></td><td>可执行文件缺少有效的数字签名</td><td>高</td><td>代码完整性与签名</td><td>待处理</td></tr>
+<tr><td><a href="#finding-WS-104">WS-104</a></td><td><span class="badge sev-medium">中危</span></td><td>YARA 规则命中</td><td>中</td><td>威胁情报匹配</td><td>待处理</td></tr>
+<tr><td><a href="#finding-WS-102">WS-102</a></td><td><span class="badge sev-info">信息</span></td><td>二进制保留了调试信息（PDB 路径）</td><td>高</td><td>防篡改与构建可信性</td><td>待处理</td></tr>
+<tr><td><a href="#finding-WS-103">WS-103</a></td><td><span class="badge sev-info">信息</span></td><td>运行期行为画像汇总</td><td>高</td><td>行为画像</td><td>待处理</td></tr>
+<tr><td><a href="#finding-WS-105">WS-105</a></td><td><span class="badge sev-info">信息</span></td><td>测试环境权限不足，部分证据的完整性受限</td><td>高</td><td>工具链与环境</td><td>待处理</td></tr>
+</tbody></table>
+<h3>采集覆盖一览</h3>
+<table class="data"><thead><tr><th>维度</th><th>覆盖情况</th></tr></thead><tbody>
+<tr><td>静态分析</td><td>已完成（PE 结构 / 字符串 / 依赖 / 签名）</td></tr>
+<tr><td>类型识别</td><td>已完成（C / C++ 原生应用）</td></tr>
+<tr><td>动态分析</td><td>已执行</td></tr>
+<tr><td>网络采集</td><td>已采集</td></tr>
+<tr><td>权限级别</td><td>标准用户（部分证据精度受限）</td></tr>
+<tr><td>证据条数</td><td>21</td></tr>
+<tr><td>人工复核</td><td>0/5 条已复核</td></tr>
+</tbody></table>
+</div>
+<h2 class="section" id="sec-application">2. 程序信息</h2>
+<div class="sec-body">
+<table class="data kv"><tbody>
+<tr><th>文件名</th><td>notepad.exe</td></tr>
+<tr><th>完整路径</th><td>C:\Users\TianManyi\WorkBuddy\winseclab\.wsx-smoke\Projects\WS-20260929-008_最终验证\Target\notepad.exe</td></tr>
+<tr><th>文件大小</th><td>360,448 字节（0.34 MB）</td></tr>
+<tr><th>SHA-256</th><td>468ffe129c395abf6b21a09efdf261910a95fb98aa982ead73caa7b2b684577e</td></tr>
+<tr><th>MD5</th><td>8a1d8175ccca97054cdb25acbb4cc07e</td></tr>
+<tr><th>IMPHASH</th><td>728a1b3f7dd708a087950594ffdf6c20</td></tr>
+<tr><th>文件版本</th><td>10.0.26100.9278 (WinBuild.160101.0800)</td></tr>
+<tr><th>产品名称</th><td>Microsoft&#174; Windows&#174; Operating System</td></tr>
+<tr><th>公司</th><td>Microsoft Corporation</td></tr>
+<tr><th>文件说明</th><td>Notepad</td></tr>
+<tr><th>签名状态</th><td>未签名</td></tr>
+<tr><th>签名者</th><td>—</td></tr>
+<tr><th>签名时间戳</th><td>无</td></tr>
+<tr><th>识别类型</th><td>C / C++ 原生应用</td></tr>
+<tr><th>识别置信度</th><td>98%</td></tr>
+</tbody></table>
+<h3>类型识别依据</h3>
+<table class="data"><thead><tr><th>信号</th><th>说明</th><th>权重</th></tr></thead><tbody>
+<tr><td>原生映像</td><td>无托管 / 框架运行时特征，节区 .text fothk .rdata .data .pdata .didat</td><td>3</td></tr>
+</tbody></table>
+</div>
+<h2 class="section" id="sec-environment">3. 测试环境</h2>
+<div class="sec-body">
+<table class="data kv"><tbody>
+<tr><th>主机名</th><td>WIN-O58D1FE3C92</td></tr>
+<tr><th>测试账号</th><td>TianManyi</td></tr>
+<tr><th>操作系统</th><td>Microsoft Windows NT 10.0.26200.0 (Build 10.0.26200.0)</td></tr>
+<tr><th>系统架构</th><td>X64</td></tr>
+<tr><th>.NET 运行时</th><td>.NET 10.0.5</td></tr>
+<tr><th>管理员权限</th><td>否（部分证据精度受限）</td></tr>
+<tr><th>虚拟化环境</th><td>未检测到虚拟化特征</td></tr>
+<tr><th>处理器 / 内存</th><td>16 逻辑核心 / 31.3 GB</td></tr>
+<tr><th>分析器版本</th><td>WinSecLab 0.1.0</td></tr>
+<tr><th>环境快照时间</th><td>2026-09-29 12:21:07</td></tr>
+<tr><th>会话 ID</th><td>—</td></tr>
+</tbody></table>
+<p class="warning">未检测到虚拟化环境。按 §14 沙箱设计要求，未知或高风险程序应在 Hyper-V / Windows Sandbox 等隔离环境中运行。</p>
+</div>
+<h2 class="section" id="sec-static">4. 静态分析</h2>
+<div class="sec-body">
+<table class="data kv"><tbody>
+<tr><th>PE 有效性</th><td>有效</td></tr>
+<tr><th>架构 / 子系统</th><td>x64 / WindowsGui</td></tr>
+<tr><th>CLR 映像类型</th><td>PE32Plus</td></tr>
+<tr><th>编译器</th><td>MSVC 14.x（Visual Studio 2015 – 2026） — 构建号指向 Visual Studio 2022 17.8+（链接器 14.38）</td></tr>
+<tr><th>编译依据</th><td>Rich Header 构建号 33145（MSVC 14.x（Visual Studio 2015 – 2026） — 构建号指向 Visual Studio 2022 17.8+）</td></tr>
+<tr><th>时间戳</th><td>1979-02-20 02:32:04（可复现构建伪时间戳）</td></tr>
+<tr><th>入口点 RVA</th><td>0x19C0</td></tr>
+<tr><th>镜像基址</th><td>0x140000000</td></tr>
+<tr><th>节区数</th><td>8</td></tr>
+<tr><th>导入</th><td>56 个模块 / 315 个函数</td></tr>
+<tr><th>延迟导入</th><td>6 项</td></tr>
+<tr><th>导出</th><td>0</td></tr>
+<tr><th>资源条目</th><td>31</td></tr>
+<tr><th>整体熵值</th><td>6.4825（偏高）</td></tr>
+<tr><th>Overlay</th><td>无</td></tr>
+<tr><th>缓解措施</th><td>ASLR | DEP | TSAware | HighEntropyVA | CFG</td></tr>
+<tr><th>Rich Header</th><td>共 10 条编译单元记录，最高构建号 33145</td></tr>
+<tr><th>PDB 路径</th><td>notepad.pdb</td></tr>
+</tbody></table>
+<h3>节区明细</h3>
+<div class="fold"><input type="checkbox" class="fold-toggle" id="fold-4fa21569" checked><label class="fold-head" for="fold-4fa21569"><span class="fold-title">节区明细（8 个节区）</span><span class="fold-badge">8 项</span></label><div class="fold-body"><div class="table-scroll"><table class="data"><thead><tr><th>节区</th><th>权限</th><th>虚拟大小</th><th>原始大小</th><th>熵值</th><th>性质</th></tr></thead><tbody>
+<tr><td>.text</td><td>R-X</td><td>157,666</td><td>159,744</td><td>6.2382</td><td>偏高</td></tr>
+<tr><td>fothk</td><td>R-X</td><td>4,096</td><td>4,096</td><td>0.0159</td><td>极低（大量零填充）</td></tr>
+<tr><td>.rdata</td><td>R--</td><td>42,696</td><td>45,056</td><td>5.5819</td><td>偏高</td></tr>
+<tr><td>.data</td><td>RW-</td><td>10,048</td><td>4,096</td><td>1.6243</td><td>偏低（结构化数据）</td></tr>
+<tr><td>.pdata</td><td>R--</td><td>4,632</td><td>8,192</td><td>3.3201</td><td>偏低（结构化数据）</td></tr>
+<tr><td>.didat</td><td>RW-</td><td>248</td><td>4,096</td><td>0.2520</td><td>极低（大量零填充）</td></tr>
+<tr><td>.rsrc</td><td>R--</td><td>123,344</td><td>126,976</td><td>6.9680</td><td>高（可能已压缩）</td></tr>
+<tr><td>.reloc</td><td>R--</td><td>860</td><td>4,096</td><td>1.6193</td><td>偏低（结构化数据）</td></tr>
+</tbody></table>
+</div>
+</div></div>
+<table class="data kv"><tbody>
+<tr><th>导入模块总数</th><td>56</td></tr>
+<tr><th>其中 API Set 转发</th><td>47 个（api-ms-win-* 转发模块，属系统机制）</td></tr>
+<tr><th>其中无函数导入</th><td>6 个（仅声明依赖，未实际调用）</td></tr>
+</tbody></table>
+<h3>关键导入模块</h3>
+<table class="data"><thead><tr><th>模块</th><th>函数数</th><th>代表性函数</th></tr></thead><tbody>
+<tr><td>USER32.dll</td><td>87</td><td>PostQuitMessage, BeginPaint, EndPaint, FillRect, DrawTextW, DrawFocusRect, DefWindowProcW, TrackMouseEvent, InvalidateRect, DestroyIcon</td></tr>
+<tr><td>GDI32.dll</td><td>25</td><td>SetMapMode, SetViewportExtEx, SetWindowExtEx, LPtoDP, SetBkMode, GetTextMetricsW, TextOutW, AbortDoc, EndDoc, SetAbortProc</td></tr>
+<tr><td>COMCTL32.dll</td><td>11</td><td>ImageList_Create, ImageList_SetBkColor, Ordinal_381, ImageList_ReplaceIcon, Ordinal_410, ImageList_Draw, ImageList_GetIconSize, Ordinal_413, ImageList_Destroy, Ordinal_345</td></tr>
+</tbody></table>
+<div class="fold"><input type="checkbox" class="fold-toggle" id="fold-dd25f84"><label class="fold-head" for="fold-dd25f84"><span class="fold-title">全部 56 个导入模块明细</span><span class="fold-badge">56 项</span></label><div class="fold-body"><table class="data"><thead><tr><th>模块</th><th>函数数</th><th>代表性函数</th></tr></thead><tbody>
+<tr><td>USER32.dll</td><td>87</td><td>PostQuitMessage, BeginPaint, EndPaint, FillRect, DrawTextW, DrawFocusRect, DefWindowProcW, TrackMouseEvent</td></tr>
+<tr><td>api-ms-win-crt-private-l1-1-0.dll</td><td>39</td><td>_o__get_wide_winmain_command_line, _o__initialize_onexit_table, _o__initialize_wide_environment, _o__invalid_parameter_noinfo, _o__purecall, _o__register_onexit_function, _o__seh_filter_exe, _o__set_app_type</td></tr>
+<tr><td>GDI32.dll</td><td>25</td><td>SetMapMode, SetViewportExtEx, SetWindowExtEx, LPtoDP, SetBkMode, GetTextMetricsW, TextOutW, AbortDoc</td></tr>
+<tr><td>api-ms-win-core-synch-l1-1-0.dll</td><td>17</td><td>LeaveCriticalSection, InitializeCriticalSectionEx, WaitForSingleObject, ReleaseSemaphore, ReleaseSRWLockExclusive, EnterCriticalSection, SetEvent, CreateEventExW</td></tr>
+<tr><td>api-ms-win-core-file-l1-1-0.dll</td><td>13</td><td>DeleteFileW, GetFileAttributesW, SetEndOfFile, GetFileAttributesExW, GetFileInformationByHandle, FindClose, FindFirstFileW, CreateFileW</td></tr>
+<tr><td>COMCTL32.dll</td><td>11</td><td>ImageList_Create, ImageList_SetBkColor, Ordinal_381, ImageList_ReplaceIcon, Ordinal_410, ImageList_Draw, ImageList_GetIconSize, Ordinal_413</td></tr>
+<tr><td>api-ms-win-core-libraryloader-l1-2-0.dll</td><td>10</td><td>LockResource, GetModuleHandleExW, FindResourceExW, LoadResource, GetModuleHandleA, GetModuleFileNameA, FreeLibrary, GetProcAddress</td></tr>
+<tr><td>api-ms-win-core-com-l1-1-0.dll</td><td>9</td><td>CoTaskMemFree, CoCreateInstance, CoInitializeEx, PropVariantClear, CoUninitialize, CoWaitForMultipleHandles, CoCreateGuid, CoTaskMemAlloc</td></tr>
+<tr><td>api-ms-win-core-registry-l1-1-0.dll</td><td>9</td><td>RegQueryInfoKeyW, RegGetValueW, RegOpenKeyExW, RegDeleteKeyExW, RegEnumValueW, RegCloseKey, RegQueryValueExW, RegCreateKeyExW</td></tr>
+<tr><td>api-ms-win-core-processthreads-l1-1-0.dll</td><td>7</td><td>GetCurrentProcess, OpenProcessToken, CreateProcessW, TerminateProcess, GetCurrentThreadId, GetStartupInfoW, GetCurrentProcessId</td></tr>
+<tr><td>api-ms-win-core-heap-l2-1-0.dll</td><td>7</td><td>LocalUnlock, LocalFree, LocalLock, GlobalAlloc, GlobalFree, LocalAlloc, LocalReAlloc</td></tr>
+<tr><td>api-ms-win-core-errorhandling-l1-1-0.dll</td><td>5</td><td>UnhandledExceptionFilter, SetUnhandledExceptionFilter, RaiseException, GetLastError, SetLastError</td></tr>
+<tr><td>api-ms-win-crt-runtime-l1-1-0.dll</td><td>4</td><td>_c_exit, _initterm_e, _initterm, _register_thread_local_exe_atexit_callback</td></tr>
+<tr><td>api-ms-win-core-heap-l1-1-0.dll</td><td>4</td><td>GetProcessHeap, HeapAlloc, HeapSetInformation, HeapFree</td></tr>
+<tr><td>api-ms-win-core-threadpool-l1-2-0.dll</td><td>4</td><td>CloseThreadpoolTimer, WaitForThreadpoolTimerCallbacks, CreateThreadpoolTimer, SetThreadpoolTimer</td></tr>
+<tr><td>api-ms-win-core-localization-l1-2-0.dll</td><td>4</td><td>FormatMessageW, FindNLSString, GetLocaleInfoW, GetACP</td></tr>
+<tr><td>api-ms-win-core-winrt-string-l1-1-0.dll</td><td>4</td><td>WindowsDeleteString, WindowsCreateString, WindowsCreateStringReference, WindowsGetStringRawBuffer</td></tr>
+<tr><td>api-ms-win-core-string-l1-1-0.dll</td><td>4</td><td>FoldStringW, WideCharToMultiByte, CompareStringOrdinal, MultiByteToWideChar</td></tr>
+<tr><td>api-ms-win-eventing-provider-l1-1-0.dll</td><td>4</td><td>EventRegister, EventUnregister, EventWriteTransfer, EventSetInformation</td></tr>
+<tr><td>api-ms-win-crt-string-l1-1-0.dll</td><td>3</td><td>wcscmp, wcsnlen, memset</td></tr>
+<tr><td>api-ms-win-core-debug-l1-1-0.dll</td><td>3</td><td>IsDebuggerPresent, OutputDebugStringW, DebugBreak</td></tr>
+<tr><td>api-ms-win-core-shlwapi-legacy-l1-1-0.dll</td><td>3</td><td>PathFileExistsW, PathIsFileSpecW, PathFindExtensionW</td></tr>
+<tr><td>api-ms-win-core-processenvironment-l1-1-0.dll</td><td>3</td><td>GetCurrentDirectoryW, GetCommandLineW, SetCurrentDirectoryW</td></tr>
+<tr><td>api-ms-win-core-memory-l1-1-0.dll</td><td>3</td><td>MapViewOfFile, CreateFileMappingW, UnmapViewOfFile</td></tr>
+<tr><td>api-ms-win-core-heap-obsolete-l1-1-0.dll</td><td>3</td><td>LocalSize, GlobalLock, GlobalUnlock</td></tr>
+<tr><td>api-ms-win-core-rtlsupport-l1-1-0.dll</td><td>3</td><td>RtlLookupFunctionEntry, RtlCaptureContext, RtlVirtualUnwind</td></tr>
+<tr><td>api-ms-win-core-sysinfo-l1-1-0.dll</td><td>2</td><td>GetLocalTime, GetSystemTimeAsFileTime</td></tr>
+<tr><td>api-ms-win-core-datetime-l1-1-0.dll</td><td>2</td><td>GetDateFormatW, GetTimeFormatW</td></tr>
+<tr><td>api-ms-win-core-processthreads-l1-1-1.dll</td><td>2</td><td>IsProcessorFeaturePresent, GetProcessMitigationPolicy</td></tr>
+<tr><td>api-ms-win-core-handle-l1-1-0.dll</td><td>1</td><td>CloseHandle</td></tr>
+<tr><td>api-ms-win-core-registry-l1-1-1.dll</td><td>1</td><td>RegSetKeyValueW</td></tr>
+<tr><td>api-ms-win-core-largeinteger-l1-1-0.dll</td><td>1</td><td>MulDiv</td></tr>
+<tr><td>api-ms-win-core-winrt-l1-1-0.dll</td><td>1</td><td>RoGetActivationFactory</td></tr>
+<tr><td>api-ms-win-shcore-obsolete-l1-1-0.dll</td><td>1</td><td>SHStrDupW</td></tr>
+<tr><td>api-ms-win-security-base-l1-1-0.dll</td><td>1</td><td>GetTokenInformation</td></tr>
+<tr><td>api-ms-win-core-psapi-l1-1-0.dll</td><td>1</td><td>K32GetModuleFileNameExW</td></tr>
+<tr><td>api-ms-win-core-localization-obsolete-l1-2-0.dll</td><td>1</td><td>GetUserDefaultUILanguage</td></tr>
+<tr><td>api-ms-win-shcore-path-l1-1-0.dll</td><td>1</td><td>Ordinal_170</td></tr>
+<tr><td>api-ms-win-core-registry-l2-1-0.dll</td><td>1</td><td>RegCreateKeyW</td></tr>
+<tr><td>api-ms-win-shcore-scaling-l1-1-1.dll</td><td>1</td><td>GetDpiForMonitor</td></tr>
+<tr><td>api-ms-win-core-string-obsolete-l1-1-0.dll</td><td>1</td><td>lstrcmpiW</td></tr>
+<tr><td>api-ms-win-core-windowserrorreporting-l1-1-3.dll</td><td>1</td><td>RegisterApplicationRestart</td></tr>
+<tr><td>api-ms-win-base-util-l1-1-0.dll</td><td>1</td><td>IsTextUnicode</td></tr>
+<tr><td>api-ms-win-core-libraryloader-l1-2-1.dll</td><td>1</td><td>FindResourceW</td></tr>
+<tr><td>api-ms-win-core-profile-l1-1-0.dll</td><td>1</td><td>QueryPerformanceCounter</td></tr>
+<tr><td>api-ms-win-core-interlocked-l1-1-0.dll</td><td>1</td><td>InitializeSListHead</td></tr>
+<tr><td>api-ms-win-core-winrt-error-l1-1-0.dll</td><td>1</td><td>SetRestrictedErrorInfo</td></tr>
+<tr><td>api-ms-win-core-winrt-error-l1-1-1.dll</td><td>1</td><td>RoGetMatchingRestrictedErrorInfo</td></tr>
+<tr><td>api-ms-win-core-delayload-l1-1-1.dll</td><td>1</td><td>ResolveDelayLoadedAPI</td></tr>
+<tr><td>api-ms-win-core-delayload-l1-1-0.dll</td><td>1</td><td>DelayLoadFailureHook</td></tr>
+<tr><td>ADVAPI32.dll</td><td>0</td><td></td></tr>
+<tr><td>COMDLG32.dll</td><td>0</td><td></td></tr>
+<tr><td>PROPSYS.dll</td><td>0</td><td></td></tr>
+<tr><td>SHELL32.dll</td><td>0</td><td></td></tr>
+<tr><td>WINSPOOL.DRV</td><td>0</td><td></td></tr>
+<tr><td>urlmon.dll</td><td>0</td><td></td></tr>
+</tbody></table>
+</div></div>
+</div>
+<h2 class="section" id="sec-runtime">5. 运行期观测</h2>
+<div class="sec-body">
+<h3>采集覆盖状态</h3>
+<table class="data"><thead><tr><th>观测维度</th><th>状态</th><th>数据量</th><th>说明</th></tr></thead><tbody>
+<tr><td>动态会话</td><td>已执行</td><td>2</td><td>目标程序已启动并完成监控</td></tr>
+<tr><td>进程活动</td><td>已采集</td><td>2 条</td><td>含进程创建与子进程派生</td></tr>
+<tr><td>文件系统</td><td>无记录</td><td>0 条</td><td>目标未改动文件，或监控权限不足</td></tr>
+<tr><td>注册表</td><td>无记录</td><td>0 条</td><td>目标未改动注册表，或监控权限不足</td></tr>
+<tr><td>网络连接</td><td>已采集</td><td>1 条</td><td>含连接表与域名解析</td></tr>
+</tbody></table>
+<p class="note">「未采集」表示该维度没有数据，<strong>不代表该维度没有问题</strong> —— 请对照说明确认是目标行为如此，还是采集能力受限于权限/工具缺失。</p>
+<p class="note">已启用任务：ProcessMonitor, FileMonitor, RegistryMonitor, NetworkCapture；权限：标准用户</p>
+<p class="note">已启用任务：ProcessMonitor, FileMonitor, RegistryMonitor, NetworkCapture；权限：标准用户</p>
+<h3>可疑行为时间线</h3>
+<table class="data"><thead><tr><th>时间</th><th>类型</th><th>对象</th><th>原因</th></tr></thead><tbody>
+<tr><td>12:21:11.898</td><td>NetworkConnect</td><td>119.3.160.204:11111</td><td>直连外部 IP 119.3.160.204:11111，未观测到域名解析记录，端口 11111（TCP）</td></tr>
+<tr><td>12:21:11.898</td><td>NetworkConnect</td><td>119.3.160.204:11111</td><td>直连外部 IP 119.3.160.204:11111，未观测到域名解析记录，端口 11111（TCP）</td></tr>
+</tbody></table>
+<h3>进程创建</h3>
+<div class="fold"><input type="checkbox" class="fold-toggle" id="fold-70639e6b" checked><label class="fold-head" for="fold-70639e6b"><span class="fold-title">进程创建明细（2 条）</span><span class="fold-badge">2 条</span></label><div class="fold-body"><table class="data"><thead><tr><th>时间</th><th>进程</th><th>PID</th><th>父 PID</th><th>路径</th></tr></thead><tbody>
+<tr><td>12:21:11.598</td><td>notepad.exe</td><td>27612</td><td>0</td><td>C:\Windows\System32\notepad.exe</td></tr>
+<tr><td>12:21:11.598</td><td>notepad.exe</td><td>27612</td><td>0</td><td>C:\Windows\System32\notepad.exe</td></tr>
+</tbody></table>
+</div></div>
+<h3>网络连接</h3>
+<p>共 1 条连接，其中目标进程树相关 0 条，解析到域名 0 条。</p>
+<h4>连接明细（目标进程树相关）</h4>
+<p class="note">本次未采集到与目标进程树相关的连接记录。</p>
+<h3>事件构成统计</h3>
+<table class="data"><thead><tr><th>事件类型</th><th>数量</th></tr></thead><tbody>
+<tr><td>ProcessStart</td><td>2</td></tr>
+<tr><td>NetworkConnect</td><td>2</td></tr>
+<tr><td>SessionStart</td><td>2</td></tr>
+<tr><td>SessionStop</td><td>2</td></tr>
+</tbody></table>
+</div>
+<h2 class="section" id="sec-dependencies">6. 依赖分析</h2>
+<div class="sec-body">
+<p class="note">未解析到依赖项。</p>
+</div>
+<h2 class="section" id="sec-findings">7. 安全发现</h2>
+<div class="sec-body">
+<article class="finding" id="finding-WS-101">
+<div class="finding-head"><span class="finding-id">WS-101</span><span class="badge sev-medium">中危</span><span class="finding-title">可执行文件缺少有效的数字签名</span></div>
+<table class="data compact"><tbody>
+<tr><th>规则</th><td>WS-001（代码完整性与签名）</td></tr>
+<tr><th>置信度</th><td>高</td></tr>
+<tr><th>处理状态</th><td>待处理（未经人工复核）</td></tr>
+<tr><th>命中对象</th><td>C:\Users\TianManyi\WorkBuddy\winseclab\.wsx-smoke\Projects\WS-20260929-008_最终验证\Target\notepad.exe</td></tr>
+<tr><th>CWE</th><td>CWE-345</td></tr>
+<tr><th>OWASP</th><td>A08:2021 Software and Data Integrity Failures</td></tr>
+<tr><th>来源</th><td>WinSecLab 规则引擎</td></tr>
+</tbody></table>
+<h4>说明</h4>
+<div class="prose">被测主程序未通过 WinVerifyTrust 校验。缺失或无效的签名意味着二进制内容无法与发布者身份绑定，同时也会让终端防护软件降低对它的信任评级。<br><br>命中事实：<br>• 签名状态：未签名<br>• WinVerifyTrust 返回：0x800B0100</div>
+<h4>影响</h4>
+<div class="prose">无法验证发布者与完整性：分发链被替换、被第三方二次打包时不会有任何提示。</div>
+<h4>复现步骤</h4>
+<div class="prose">1. 在隔离的 Windows 测试环境中以测试账号运行被测程序（本次会话已记录证据）。<br>2. 关注对象：C:\Users\TianManyi\WorkBuddy\winseclab\.wsx-smoke\Projects\WS-20260929-008_最终验证\Target\notepad.exe<br>3. 在 WS-001 关联的证据条目中查看原始记录（进程 / 文件 / 注册表 / 网络时间线）。<br>4. 若需精确归因（谁写的、哪个线程调的），按建议启用 Process Monitor 适配器复现一次。</div>
+<h4>整改建议</h4>
+<div class="prose recommend">为发布版本配置代码签名证书（EV 证书可获得 SmartScreen 立即信誉），在 CI 中对每个产物签名并校验。</div>
+<h4>关联证据</h4>
+<table class="data"><thead><tr><th>证据 ID</th><th>类型</th><th>标题</th><th>来源</th></tr></thead><tbody>
+<tr><td>EV-SIGN-00007</td><td>Signature</td><td>数字签名校验结果</td><td>builtin.signature</td></tr>
+</tbody></table>
+<h4>关联实体</h4>
+<ul class="related">
+<li>文件：C:\Users\TianManyi\WorkBuddy\winseclab\.wsx-smoke\Projects\WS-20260929-008_最终验证\Target\notepad.exe</li>
+</ul>
+</article>
+<article class="finding" id="finding-WS-104">
+<div class="finding-head"><span class="finding-id">WS-104</span><span class="badge sev-medium">中危</span><span class="finding-title">YARA 规则命中</span></div>
+<table class="data compact"><tbody>
+<tr><th>规则</th><td>WS-301（威胁情报匹配）</td></tr>
+<tr><th>置信度</th><td>中</td></tr>
+<tr><th>处理状态</th><td>待处理（未经人工复核）</td></tr>
+<tr><th>命中对象</th><td>C:\Users\TianManyi\WorkBuddy\winseclab\.wsx-smoke\Projects\WS-20260929-008_最终验证\Target\notepad.exe</td></tr>
+<tr><th>CWE</th><td>CWE-506</td></tr>
+<tr><th>来源</th><td>WinSecLab 规则引擎</td></tr>
+</tbody></table>
+<h4>说明</h4>
+<div class="prose">内置或外部 YARA 规则在目标文件上命中。命中结果反映的是「与已知特征相似」，必须结合规则语义与上下文判断，不能单凭命中定性。<br><br>命中事实：<br>• 规则：WS_YR_Anti_Debug_Cluster（builtin）<br>• 来源引擎：WinSecLab 内置轻量匹配器<br>• 规则说明：反调试 API 密集：判断是否被调试、检查父进程、时间差检测。<br>• 匹配内容：$a = IsDebuggerPresent；$d = OutputDebugString；$e = QueryPerformanceCounter</div>
+<h4>影响</h4>
+<div class="prose">命中的规则可能指向加壳、凭据窃取、远控通信等已知家族特征。</div>
+<h4>复现步骤</h4>
+<div class="prose">1. 在隔离的 Windows 测试环境中以测试账号运行被测程序（本次会话已记录证据）。<br>2. 关注对象：C:\Users\TianManyi\WorkBuddy\winseclab\.wsx-smoke\Projects\WS-20260929-008_最终验证\Target\notepad.exe<br>3. 在 WS-301 关联的证据条目中查看原始记录（进程 / 文件 / 注册表 / 网络时间线）。<br>4. 若需精确归因（谁写的、哪个线程调的），按建议启用 Process Monitor 适配器复现一次。</div>
+<h4>整改建议</h4>
+<div class="prose recommend">逐条核对命中的规则逻辑与匹配到的字符串位置；确认是已知库的误报后，把例外加入白名单并记录理由。</div>
+<h4>关联证据</h4>
+<table class="data"><thead><tr><th>证据 ID</th><th>类型</th><th>标题</th><th>来源</th></tr></thead><tbody>
+<tr><td>EV-YARA-00016</td><td>Yara</td><td>YARA 规则视角聚合</td><td>builtin.yara</td></tr>
+<tr><td>EV-YARA-00015</td><td>Yara</td><td>YARA 命中明细</td><td>builtin.yara</td></tr>
+<tr><td>EV-YARA-00014</td><td>Yara</td><td>YARA 扫描汇总</td><td>builtin.yara</td></tr>
+</tbody></table>
+<h4>关联实体</h4>
+<ul class="related">
+<li>文件：C:\Users\TianManyi\WorkBuddy\winseclab\.wsx-smoke\Projects\WS-20260929-008_最终验证\Target\notepad.exe</li>
+</ul>
+</article>
+<article class="finding" id="finding-WS-102">
+<div class="finding-head"><span class="finding-id">WS-102</span><span class="badge sev-info">信息</span><span class="finding-title">二进制保留了调试信息（PDB 路径）</span></div>
+<table class="data compact"><tbody>
+<tr><th>规则</th><td>WS-014（防篡改与构建可信性）</td></tr>
+<tr><th>置信度</th><td>高</td></tr>
+<tr><th>处理状态</th><td>待处理（未经人工复核）</td></tr>
+<tr><th>命中对象</th><td>C:\Users\TianManyi\WorkBuddy\winseclab\.wsx-smoke\Projects\WS-20260929-008_最终验证\Target\notepad.exe</td></tr>
+<tr><th>CWE</th><td>CWE-200</td></tr>
+<tr><th>OWASP</th><td>A05:2021 Security Misconfiguration</td></tr>
+<tr><th>来源</th><td>WinSecLab 规则引擎</td></tr>
+</tbody></table>
+<h4>说明</h4>
+<div class="prose">PE 的调试目录中保留了 CodeView 记录，包含编译机上的 PDB 路径。这属于信息泄露：可能暴露项目结构和开发者账号名；同时也说明这是未做符号剥离的调试或内部版本。<br><br>命中事实：<br>• 调试路径：notepad.pdb</div>
+<h4>影响</h4>
+<div class="prose">泄露内部目录结构与可能的开发者身份信息，便于攻击者构造针对性攻击。</div>
+<h4>复现步骤</h4>
+<div class="prose">1. 在隔离的 Windows 测试环境中以测试账号运行被测程序（本次会话已记录证据）。<br>2. 关注对象：C:\Users\TianManyi\WorkBuddy\winseclab\.wsx-smoke\Projects\WS-20260929-008_最终验证\Target\notepad.exe<br>3. 在 WS-014 关联的证据条目中查看原始记录（进程 / 文件 / 注册表 / 网络时间线）。<br>4. 若需精确归因（谁写的、哪个线程调的），按建议启用 Process Monitor 适配器复现一次。</div>
+<h4>整改建议</h4>
+<div class="prose recommend">发布构建中使用 /DEBUG:NONE，或构建后剥离调试目录与 PDB 引用。</div>
+<h4>关联证据</h4>
+<table class="data"><thead><tr><th>证据 ID</th><th>类型</th><th>标题</th><th>来源</th></tr></thead><tbody>
+<tr><td>EV-PE-00004</td><td>Pe</td><td>资源目录摘要</td><td>builtin.pe</td></tr>
+<tr><td>EV-PE-00003</td><td>Pe</td><td>Rich Header / 编译器指纹</td><td>builtin.pe</td></tr>
+<tr><td>EV-PE-00002</td><td>Pe</td><td>调试目录（PDB 路径）</td><td>builtin.pe</td></tr>
+<tr><td>EV-PE-00001</td><td>Pe</td><td>PE 结构画像</td><td>builtin.pe</td></tr>
+</tbody></table>
+<h4>关联实体</h4>
+<ul class="related">
+<li>文件：C:\Users\TianManyi\WorkBuddy\winseclab\.wsx-smoke\Projects\WS-20260929-008_最终验证\Target\notepad.exe</li>
+</ul>
+</article>
+<article class="finding" id="finding-WS-103">
+<div class="finding-head"><span class="finding-id">WS-103</span><span class="badge sev-info">信息</span><span class="finding-title">运行期行为画像汇总</span></div>
+<table class="data compact"><tbody>
+<tr><th>规则</th><td>WS-110（行为画像）</td></tr>
+<tr><th>置信度</th><td>高</td></tr>
+<tr><th>处理状态</th><td>待处理（未经人工复核）</td></tr>
+<tr><th>命中对象</th><td>notepad.exe</td></tr>
+<tr><th>CWE</th><td>CWE-1059</td></tr>
+<tr><th>来源</th><td>WinSecLab 规则引擎</td></tr>
+</tbody></table>
+<h4>说明</h4>
+<div class="prose">汇总本次会话观测到的进程树、文件、注册表与网络活动，作为整体行为画像供人工复核。<br><br>命中事实：<br>• 事件构成：ProcessStart：1 条；NetworkConnect：1 条<br>• 涉及进程：notepad.exe</div>
+<h4>影响</h4>
+<div class="prose">行为画像是判断程序是否「说了不做、做了不说」的基础：声称为本地工具的程序若频繁联网，或安装包落地可执行文件后又自我删除，都会在这里先露出痕迹。</div>
+<h4>复现步骤</h4>
+<div class="prose">1. 在隔离的 Windows 测试环境中以测试账号运行被测程序（本次会话已记录证据）。<br>2. 关注对象：notepad.exe<br>3. 在 WS-110 关联的证据条目中查看原始记录（进程 / 文件 / 注册表 / 网络时间线）。<br>4. 若需精确归因（谁写的、哪个线程调的），按建议启用 Process Monitor 适配器复现一次。</div>
+<h4>整改建议</h4>
+<div class="prose recommend">逐项核对画像中的每类活动是否都有对应的业务解释；解释不通的条目回到「证据库」定位原始记录，必要时用 Process Monitor 补一次 PID 级归因。</div>
+<h4>关联证据</h4>
+<table class="data"><thead><tr><th>证据 ID</th><th>类型</th><th>标题</th><th>来源</th></tr></thead><tbody>
+<tr><td>EV-NETW-00019</td><td>Network</td><td>网络连接汇总</td><td>builtin.network</td></tr>
+<tr><td>EV-PROC-00018</td><td>Process</td><td>进程树快照</td><td>builtin.process</td></tr>
+<tr><td>EV-PROC-00017</td><td>Process</td><td>进程与模块活动</td><td>builtin.process</td></tr>
+</tbody></table>
+<h4>关联实体</h4>
+<ul class="related">
+<li>进程：notepad.exe</li>
+</ul>
+</article>
+<article class="finding" id="finding-WS-105">
+<div class="finding-head"><span class="finding-id">WS-105</span><span class="badge sev-info">信息</span><span class="finding-title">测试环境权限不足，部分证据的完整性受限</span></div>
+<table class="data compact"><tbody>
+<tr><th>规则</th><td>WS-302（工具链与环境）</td></tr>
+<tr><th>置信度</th><td>高</td></tr>
+<tr><th>处理状态</th><td>待处理（未经人工复核）</td></tr>
+<tr><th>命中对象</th><td>本机测试环境</td></tr>
+<tr><th>CWE</th><td>CWE-1059</td></tr>
+<tr><th>来源</th><td>WinSecLab 规则引擎</td></tr>
+</tbody></table>
+<h4>说明</h4>
+<div class="prose">本次分析未能以管理员权限运行，或所需的第三方工具未安装。进程事件退化为轮询、注册表事件精度受扫描间隔限制、TLS 证书字段无法解析等，都会让证据出现空白。<br><br>命中事实：<br>• 当前未以管理员权限运行</div>
+<h4>影响</h4>
+<div class="prose">证据缺失可能掩盖真实存在的问题，结论只能作为「已知范围内」的判断。</div>
+<h4>复现步骤</h4>
+<div class="prose">1. 在隔离的 Windows 测试环境中以测试账号运行被测程序（本次会话已记录证据）。<br>2. 关注对象：本机测试环境<br>3. 在 WS-302 关联的证据条目中查看原始记录（进程 / 文件 / 注册表 / 网络时间线）。<br>4. 若需精确归因（谁写的、哪个线程调的），按建议启用 Process Monitor 适配器复现一次。</div>
+<h4>整改建议</h4>
+<div class="prose recommend">以管理员身份重新运行一次完整测试；按「插件与工具」页面的提示安装 Process Monitor、Wireshark（含 tshark）、YARA、Ghidra 等工具后复测，获得内核级精确归因。</div>
+</article>
+</div>
+<h2 class="section" id="sec-evidence">8. 证据链</h2>
+<div class="sec-body">
+<p>共 21 条证据，全部落盘在项目目录下，可通过证据 ID 在数据库中检索原始记录。</p>
+<div class="fold"><input type="checkbox" class="fold-toggle" id="fold-714e7595" checked><label class="fold-head" for="fold-714e7595"><span class="fold-title">证据清单（21 条）</span><span class="fold-badge">21 条</span></label><div class="fold-body"><table class="data"><thead><tr><th>证据 ID</th><th>类型</th><th>标题</th><th>来源</th><th>时间</th></tr></thead><tbody>
+<tr><td>EV-STAT-00021</td><td>Static</td><td>发现项汇总</td><td>builtin.correlation</td><td>2026-09-29 12:21:13.094</td></tr>
+<tr><td>EV-STAT-00020</td><td>Static</td><td>关联分析汇总</td><td>builtin.correlation</td><td>2026-09-29 12:21:13.092</td></tr>
+<tr><td>EV-NETW-00019</td><td>Network</td><td>网络连接汇总</td><td>builtin.network</td><td>2026-09-29 12:21:12.999</td></tr>
+<tr><td>EV-PROC-00018</td><td>Process</td><td>进程树快照</td><td>builtin.process</td><td>2026-09-29 12:21:12.992</td></tr>
+<tr><td>EV-PROC-00017</td><td>Process</td><td>进程与模块活动</td><td>builtin.process</td><td>2026-09-29 12:21:12.990</td></tr>
+<tr><td>EV-YARA-00016</td><td>Yara</td><td>YARA 规则视角聚合</td><td>builtin.yara</td><td>2026-09-29 12:21:09.800</td></tr>
+<tr><td>EV-YARA-00015</td><td>Yara</td><td>YARA 命中明细</td><td>builtin.yara</td><td>2026-09-29 12:21:09.797</td></tr>
+<tr><td>EV-YARA-00014</td><td>Yara</td><td>YARA 扫描汇总</td><td>builtin.yara</td><td>2026-09-29 12:21:09.788</td></tr>
+<tr><td>EV-STRI-00013</td><td>Strings</td><td>字符串：Format（7 条）</td><td>builtin.strings</td><td>2026-09-29 12:21:09.732</td></tr>
+<tr><td>EV-STRI-00012</td><td>Strings</td><td>字符串：文件路径（61 条）</td><td>builtin.strings</td><td>2026-09-29 12:21:09.732</td></tr>
+<tr><td>EV-STRI-00011</td><td>Strings</td><td>字符串提取总览（944 条）</td><td>builtin.strings</td><td>2026-09-29 12:21:09.721</td></tr>
+<tr><td>EV-STRI-00010</td><td>Strings</td><td>字符串：IP 地址（2 条）</td><td>builtin.strings</td><td>2026-09-29 12:21:09.716</td></tr>
+<tr><td>EV-STRI-00009</td><td>Strings</td><td>字符串：URL 地址（3 条）</td><td>builtin.strings</td><td>2026-09-29 12:21:09.716</td></tr>
+<tr><td>EV-STRI-00008</td><td>Strings</td><td>字符串：安全相关 API 名（3 条）</td><td>builtin.strings</td><td>2026-09-29 12:21:09.711</td></tr>
+<tr><td>EV-SIGN-00007</td><td>Signature</td><td>数字签名校验结果</td><td>builtin.signature</td><td>2026-09-29 12:21:09.511</td></tr>
+<tr><td>EV-DEPE-00006</td><td>Dependency</td><td>同目录二进制清单</td><td>builtin.dependencies</td><td>2026-09-29 12:21:09.505</td></tr>
+<tr><td>EV-DEPE-00005</td><td>Dependency</td><td>依赖解析结果</td><td>builtin.dependencies</td><td>2026-09-29 12:21:09.503</td></tr>
+<tr><td>EV-PE-00004</td><td>Pe</td><td>资源目录摘要</td><td>builtin.pe</td><td>2026-09-29 12:21:09.120</td></tr>
+<tr><td>EV-PE-00003</td><td>Pe</td><td>Rich Header / 编译器指纹</td><td>builtin.pe</td><td>2026-09-29 12:21:09.118</td></tr>
+<tr><td>EV-PE-00002</td><td>Pe</td><td>调试目录（PDB 路径）</td><td>builtin.pe</td><td>2026-09-29 12:21:09.114</td></tr>
+<tr><td>EV-PE-00001</td><td>Pe</td><td>PE 结构画像</td><td>builtin.pe</td><td>2026-09-29 12:21:09.112</td></tr>
+</tbody></table>
+</div></div>
+</div>
+<h2 class="section" id="sec-remediation">9. 风险整改</h2>
+<div class="sec-body">
+<p>按严重级与整改成本排序，建议按以下顺序推进。优先级 P0 应立即处理，P1 在下一个迭代修复，P2 纳入技术债跟踪，P3 视情况优化。</p>
+<div class="table-scroll"><table class="data"><thead><tr><th>优先级</th><th>编号</th><th>处理状态</th><th>问题</th><th>建议动作</th><th>验证方式</th></tr></thead><tbody>
+<tr><td>P1 下个迭代</td><td>WS-101</td><td>待处理</td><td>可执行文件缺少有效的数字签名</td><td>为发布版本配置代码签名证书（EV 证书可获得 SmartScreen 立即信誉），在 CI 中对每个产物签名并校验。</td><td>用 signtool verify /pa /v 校验产物签名与时间戳</td></tr>
+<tr><td>P1 下个迭代</td><td>WS-104</td><td>待处理</td><td>YARA 规则命中</td><td>逐条核对命中的规则逻辑与匹配到的字符串位置；确认是已知库的误报后，把例外加入白名单并记录理由。</td><td>用 YARA 规则单独复扫并人工比对命中位置</td></tr>
+<tr><td>P3 可选</td><td>WS-102</td><td>待处理</td><td>二进制保留了调试信息（PDB 路径）</td><td>发布构建中使用 /DEBUG:NONE，或构建后剥离调试目录与 PDB 引用。</td><td>按整改建议复测一次，保留前后证据对比</td></tr>
+<tr><td>P3 可选</td><td>WS-103</td><td>待处理</td><td>运行期行为画像汇总</td><td>逐项核对画像中的每类活动是否都有对应的业务解释；解释不通的条目回到「证据库」定位原始记录，必要时用 Process Monitor 补一次 PID 级归因。</td><td>按整改建议复测一次，保留前后证据对比</td></tr>
+<tr><td>P3 可选</td><td>WS-105</td><td>待处理</td><td>测试环境权限不足，部分证据的完整性受限</td><td>以管理员身份重新运行一次完整测试；按「插件与工具」页面的提示安装 Process Monitor、Wireshark（含 tshark）、YARA、Ghidra 等工具后复测，获得内核级精确归因。</td><td>按整改建议复测一次，保留前后证据对比</td></tr>
+</tbody></table>
+</div>
+</div>
+<h2 class="section" id="sec-appendix">10. 附录</h2>
+<div class="sec-body">
+<h3>10.1 分析产物</h3>
+<ul class="related">
+<li>Target/ —— 被测文件与依赖副本</li>
+<li>Static Analysis/ —— PE 画像、字符串、依赖、.NET 元数据</li>
+<li>Dynamic Analysis/ —— 事件流（JSONL）与进程树</li>
+<li>Network/ —— 连接表、DNS、HTTP 历史</li>
+<li>Findings/ —— 统一发现（JSON）</li>
+<li>Reports/ —— 本报告</li>
+<li>analysis.db —— SQLite 证据库（可用任意 SQLite 客户端查询）</li>
+</ul>
+<h3>10.3 事件流样例</h3>
+<div class="fold"><input type="checkbox" class="fold-toggle" id="fold-3c046e01"><label class="fold-head" for="fold-3c046e01"><span class="fold-title">原始事件流样例（前 200 / 共 8 条）</span><span class="fold-badge">8 条</span></label><div class="fold-body"><div class="table-scroll"><table class="data"><thead><tr><th>时间</th><th>类型</th><th>进程</th><th>对象</th><th>操作</th><th>结果</th></tr></thead><tbody>
+<tr><td>12:21:11.598</td><td>ProcessStart</td><td>notepad.exe</td><td>C:\Windows\System32\notepad.exe</td><td>Process Start (root)</td><td>SUCCESS</td></tr>
+<tr><td>12:21:11.898</td><td>NetworkConnect</td><td>wpscloudsvr.exe</td><td>119.3.160.204:11111</td><td>TCP/UDP Connection</td><td>SUCCESS</td></tr>
+<tr><td>12:21:12.057</td><td>SessionStart</td><td></td><td>C:\Windows\System32\notepad.exe</td><td>Session Start</td><td>SUCCESS</td></tr>
+<tr><td>12:21:12.908</td><td>SessionStop</td><td></td><td>C:\Windows\System32\notepad.exe</td><td>Session Stop</td><td>SUCCESS</td></tr>
+<tr><td>12:21:11.598</td><td>ProcessStart</td><td>notepad.exe</td><td>C:\Windows\System32\notepad.exe</td><td>Process Start (root)</td><td>SUCCESS</td></tr>
+<tr><td>12:21:11.898</td><td>NetworkConnect</td><td>wpscloudsvr.exe</td><td>119.3.160.204:11111</td><td>TCP/UDP Connection</td><td>SUCCESS</td></tr>
+<tr><td>12:21:12.057</td><td>SessionStart</td><td></td><td>C:\Windows\System32\notepad.exe</td><td>Session Start</td><td>SUCCESS</td></tr>
+<tr><td>12:21:12.908</td><td>SessionStop</td><td></td><td>C:\Windows\System32\notepad.exe</td><td>Session Stop</td><td>SUCCESS</td></tr>
+</tbody></table>
+</div>
+</div></div>
+<h3>10.4 报告局限与免责说明</h3>
+<div class="prose">
+<p>本报告的所有结论均基于 WinSecLab 在本次会话中实际采集到的证据。以下因素会影响结论的完整性：</p>
+<ul>
+<li>内置文件与注册表监控采用「路径相关性 + 时间窗」归因，无法像内核级监控那样把每个事件精确绑定到发起线程；需要精确定性时请启用 Process Monitor 适配器复现。</li>
+<li>未安装的第三方工具（Wireshark / YARA / Ghidra 等）对应的分析维度为空白，不代表该维度没有问题。</li>
+<li>HTTPS 流量未做中间人解密，仅记录 CONNECT 目标主机，无法审计加密后的请求内容。</li>
+<li>自动发现只负责提示；所有中高危结论都应经人工复核证据后确认。</li>
+</ul>
+<p>测试对象应为本人拥有或已明确获得书面授权测试的 Windows 应用与测试环境。</p>
+</div>
+<h3>10.5 安全关系图（Security Graph）</h3>
+<p>中心为被测程序，向外依次为模块 / 网络 / 进程 / 文件 / 注册表 / 发现。红色节点表示可疑。</p>
+<div class="graph-wrap"><svg viewBox="0 0 1000 1000" width="100%" style="max-width:1000px;background:#fbfcfe;border:1px solid #dfe4ee;border-radius:10px">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b9c2d6"/></marker></defs>
+<line x1="500" y1="500" x2="500" y2="254" stroke="#c7cee0" stroke-width="1" stroke-dasharray="3 3" marker-end="url(#arrow)"/>
+<line x1="500" y1="500" x2="500" y2="56" stroke="#e05252" stroke-width="1.6" marker-end="url(#arrow)"/>
+<line x1="500" y1="500" x2="500" y2="944" stroke="#e05252" stroke-width="1.6" marker-end="url(#arrow)"/>
+<circle cx="500" cy="500" r="26" fill="#2e5b9f" opacity="0.92"/>
+<title>进程 · notepad.exe — x64 / WindowsGui / Native</title>
+<text x="470" y="504" font-size="15" font-family="Segoe UI, Microsoft YaHei, sans-serif" fill="#2b3242" text-anchor="end">notepad.exe</text>
+<circle cx="500" cy="254" r="10" fill="#8a94a6" opacity="0.92"/>
+<title>进程 · notepad.exe — pid=27612，父进程 pid=0，出现 2 次</title>
+<text x="486" y="258" font-size="11" font-family="Segoe UI, Microsoft YaHei, sans-serif" fill="#2b3242" text-anchor="end">notepad.exe</text>
+<circle cx="500" cy="56" r="14" fill="#7a4bd0" opacity="0.92"/>
+<title>发现 · WS-101 可执行文件缺少有效的数字签名 — Medium / 置信度 高</title>
+<text x="482" y="60" font-size="11" font-family="Segoe UI, Microsoft YaHei, sans-serif" fill="#2b3242" text-anchor="end">WS-101 可执行文件缺少有效的数字签名</text>
+<circle cx="500" cy="944" r="14" fill="#7a4bd0" opacity="0.92"/>
+<title>发现 · WS-104 YARA 规则命中 — Medium / 置信度 中</title>
+<text x="482" y="948" font-size="11" font-family="Segoe UI, Microsoft YaHei, sans-serif" fill="#2b3242" text-anchor="end">WS-104 YARA 规则命中</text>
+</svg></div>
+</div>
+<footer>
+<p>本报告由 WinSecLab 自动生成 · 证据优先，结论可回溯 · 生成时间 2026-10-06 16:01:18</p>
+</footer>
+</body>
+</html>
