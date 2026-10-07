@@ -1,9 +1,14 @@
+<div align="center">
+<img src="assets/branding/logo-256.png" width="120" alt="WinSecLab Logo">
+
 # WinSecLab — Windows PC 应用综合安全测试平台
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![.NET](https://img.shields.io/badge/.NET-10-512BD4)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4)
 ![UI](https://img.shields.io/badge/UI-WPF-68217A)
+
+</div>
 
 > 安全测试编排、证据采集、行为关联与报告平台。
 > 不重复实现 Ghidra / x64dbg / Wireshark / YARA，而是把它们**接入**统一流程，同时保证**零外部依赖也能跑完核心链路**。
@@ -17,22 +22,45 @@
 
 ## 1. 快速开始
 
+### 方式一：安装包（推荐，最省事）
+
+到 [Releases](../../releases) 下载 `WinSecLab-Setup-0.1.0.exe` 双击安装：
+
+- **免装 .NET 运行时**（自包含发布），装完直接能用
+- 安装向导支持 **简体中文 / English** 切换（默认中文）
+- 默认**只为当前用户安装**，不需要管理员权限；安装时可勾选：
+  - 创建桌面快捷方式
+  - 将 `wsx` 加入 PATH（之后任意命令行窗口都能直接敲 `wsx`）
+- 卸载时自动清理 PATH，不留垃圾
+
+### 方式二：绿色版（解压即用）
+
+从 [Releases](../../releases) 下载 `WinSecLab-win-x64.zip` 解压，双击 `WinSecLab.exe` 即可。不写注册表、不装服务。
+
+### 方式三：从源码构建
+
+```bash
+git clone https://github.com/huangli007/WinSecLab.git
+cd WinSecLab
+bash publish.sh          # 产出 dist/win-x64/（WinSecLab.exe + wsx.exe）
+bash build-installer.sh  # 可选：再打成安装包（需 Inno Setup 6）
+```
+
 ### 运行环境
 
 | 项目 | 要求 |
 |---|---|
-| 操作系统 | Windows 10 / 11 |
-| .NET | .NET 10 运行时（构建需 .NET 10 SDK） |
+| 操作系统 | Windows 10 / 11（64 位） |
+| 安装包 / 绿色版 | **无需 .NET 运行时**（自包含） |
+| 从源码构建 | .NET 10 SDK |
 | 权限 | **标准用户即可**。需要 WMI 实时进程事件、抓包、Procmon 时再以管理员运行 |
 
-### 启动
+### 命令行入口
 
 ```
-# 方式一：直接运行构建产物
-src\WinSecLab.App\bin\Release\net10.0-windows10.0.19041.0\WinSecLab.exe
-
-# 方式二：从源码启动
-dotnet run --project src/WinSecLab.App -c Release
+wsx doctor          # 一条命令体检：工作区 / 权限 / 外部工具 / 内置能力
+wsx analyze <样本>  # 跑完整个分析链路并出报告
+wsx report <项目>   # 重新生成报告（--pdf 导出 PDF）
 ```
 
 - 工作区默认在 `%USERPROFILE%\Documents\WinSecLab`，可用环境变量 `WINSECLAB_WORKSPACE` 覆盖

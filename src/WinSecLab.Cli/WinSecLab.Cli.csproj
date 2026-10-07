@@ -9,6 +9,10 @@
     <AssemblyName>wsx</AssemblyName>
     <RootNamespace>WinSecLab.Cli</RootNamespace>
     <Version>0.1.0</Version>
+    <Product>WinSecLab</Product>
+    <Company>WinSecLab</Company>
+    <Description>WinSecLab 命令行（wsx）</Description>
+    <ApplicationIcon>..\WinSecLab.App\Assets\wsl.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

@@ -10,6 +10,7 @@
     <RootNamespace>WinSecLab.App</RootNamespace>
     <AssemblyName>WinSecLab</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\wsl.ico</ApplicationIcon>
     <Version>0.1.0</Version>
     <Product>WinSecLab</Product>
     <Company>WinSecLab</Company>
@@ -20,6 +21,11 @@
   <ItemGroup>
     <!-- WPF 项目的隐式 using 集合不含 System.IO，显式补上，避免每页都写一遍 -->
     <Using Include="System.IO" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 应用图标：既作为 exe 图标（ApplicationIcon），也作为 WPF 资源供窗口引用 -->
+    <Resource Include="Assets\wsl.ico" />
   </ItemGroup>
 
   <ItemGroup>

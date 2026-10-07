@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:infra="clr-namespace:WinSecLab.App.Infrastructure"
         Title="WinSecLab — Windows 应用安全测试平台"
+        Icon="Assets/wsl.ico"
         Height="880" Width="1480"
         MinHeight="640" MinWidth="1120"
         WindowStartupLocation="CenterScreen"
