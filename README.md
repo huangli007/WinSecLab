@@ -1,11 +1,17 @@
 # WinSecLab — Windows PC 应用综合安全测试平台
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![.NET](https://img.shields.io/badge/.NET-10-512BD4)
+![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4)
+![UI](https://img.shields.io/badge/UI-WPF-68217A)
+
 > 安全测试编排、证据采集、行为关联与报告平台。
 > 不重复实现 Ghidra / x64dbg / Wireshark / YARA，而是把它们**接入**统一流程，同时保证**零外部依赖也能跑完核心链路**。
 
 - 目标：把「导入 EXE → 静态检查 → 动态运行 → 监控行为 → 关联异常 → 生成报告」变成一条可重复、可追溯的流程
 - 形态：WPF 桌面应用（主）+ `wsx` 命令行（同一引擎的另一个入口）
 - 技术栈：.NET 10 + WPF + SQLite，纯 .NET 实现内置引擎
+- 📖 **第一次使用请看 [使用手册.md](使用手册.md)** —— 从启动到出报告的完整操作步骤
 
 ---
 
@@ -305,6 +311,7 @@ WinSecLab.exe --snapshot <输出目录> --snapshot-width 1480 --snapshot-height 
 - **仅限对已获授权的软件进行安全测试**。未获授权的测试可能违反法律与服务条款
 - 平台不会做的事：不实现反编译器/调试器（走工作流适配）；不做 HTTPS 中间人解密；不修改被测程序的文件或注册表（监控全部只读）；不把结论包装成"确定恶意"，只给事实与可验证的推理
 
+
 ---
 
 ## 11. 构建与发布
@@ -360,6 +367,14 @@ dotnet publish src/WinSecLab.Cli -c Release -r win-x64 --self-contained true \
 | Ghidra | 解压发行版到 `C:\Tools\ghidra`（需 JDK 21+） | headless 导出函数 CSV；GUI 工作流脚本能双击打开 |
 
 验证三原则：① 探测到 ≠ 能跑通，务必看真实输出；② 外部工具结果与内置结果**应能对照**（数量级一致、无矛盾）；③ 降级路径要反向再验一次（卸载/禁用工具后回到内置引擎）。
+
+---
+
+## 13. 许可证
+
+本项目基于 [MIT License](LICENSE) 开源。
+
+> **免责声明**：本平台仅限对**已获授权**的软件进行安全测试。使用者须自行确保其测试行为符合当地法律法规及目标软件的授权条款。
 
 ---
 
